@@ -1,0 +1,58 @@
+name: "Kache - Rust Build Cache"
+description: "Content-addressed Rust build cache with S3 remote storage"
+author: "Zondax"
+
+inputs:
+  version:
+    description: "Kache version to install (default: latest)"
+    required: false
+  s3-bucket:
+    description: "S3 bucket name for remote cache"
+    required: false
+  s3-region:
+    description: "S3 region"
+    required: false
+    default: "us-east-1"
+  s3-prefix:
+    description: "S3 key prefix"
+    required: false
+    default: "artifacts"
+  s3-endpoint:
+    description: "Custom S3 endpoint (MinIO, R2, etc.)"
+    required: false
+  s3-access-key-id:
+    description: "S3 access key ID"
+    required: false
+  s3-secret-access-key:
+    description: "S3 secret access key"
+    required: false
+  cache-executables:
+    description: "Cache bin/dylib/proc-macro outputs"
+    required: false
+    default: "false"
+  github-cache:
+    description: "Use GitHub Actions cache for the local kache store (used when S3 is not configured)"
+    required: false
+    default: "true"
+  cache-key-prefix:
+    description: "Custom prefix for GitHub Actions cache key"
+    required: false
+    default: "kache"
+  sync:
+    description: "Pull remote cache on setup"
+    required: false
+    default: "true"
+  token:
+    description: "GitHub token for releases API and PR comments (needs pull-requests: write for comments)"
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: "node24"
+  main: "dist/setup/index.js"
+  post: "dist/save/index.js"
+  post-if: "success() || failure()"
+
+branding:
+  icon: "zap"
+  color: "orange"

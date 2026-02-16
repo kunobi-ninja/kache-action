@@ -1,0 +1,22 @@
+{
+  "name": "kache-action",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "GitHub Action for kache - content-addressed Rust build cache",
+  "scripts": {
+    "bundle": "ncc build src/setup.js -o dist/setup && ncc build src/save.js -o dist/save"
+  },
+  "dependencies": {
+    "@actions/cache": "^5.0.0",
+    "@actions/core": "^2.0.2",
+    "@actions/exec": "^1.1.1",
+    "@actions/github": "^6.0.0",
+    "@actions/glob": "^0.5.0",
+    "@actions/io": "^1.1.3",
+    "@actions/tool-cache": "^3.0.0"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "^0.38.3"
+  }
+}

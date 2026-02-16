@@ -1,0 +1,79 @@
+const core = require("@actions/core");
+const {
+  runKache,
+  saveCache,
+  parseEvents,
+  buildCommentBody,
+  postOrUpdateComment,
+} = require("./utils");
+
+async function run() {
+  try {
+    const s3Configured = core.getState("s3-configured") === "true";
+    const ghCache = core.getState("gh-cache") === "true";
+
+    // Push cache: S3 or GitHub Actions cache
+    if (s3Configured) {
+      core.info("Pushing cache to S3...");
+      await runKache(["sync", "--push"]);
+    } else if (ghCache) {
+      core.info("Saving cache to GitHub Actions cache...");
+      await saveCache();
+    }
+
+    // Parse build events from this run
+    const stats = parseEvents();
+
+    const startTime = parseInt(core.getState("start-time") || "0", 10);
+    const duration = startTime
+      ? ((Date.now() - startTime) / 1000).toFixed(1)
+      : "?";
+    const backend = s3Configured
+      ? "S3"
+      : ghCache
+        ? "GitHub Actions cache"
+        : "local only";
+
+    // Post/update sticky PR comment
+    if (stats && stats.total > 0) {
+      const token = core.getInput("token");
+      const body = buildCommentBody(stats, backend, duration);
+      try {
+        await postOrUpdateComment(body, token);
+      } catch (err) {
+        core.warning(`Failed to post PR comment: ${err.message}`);
+      }
+    }
+
+    // Write job summary (always, even outside PRs)
+    let summary = core.summary.addHeading("Kache Build Cache", 2);
+
+    if (stats && stats.total > 0) {
+      summary = summary
+        .addRaw(
+          `**${stats.hitRate}%** hit rate \u2014 ${stats.hits}/${stats.total} crates from cache, ${stats.misses} compiled\n\n`
+        )
+        .addRaw(`**Backend:** ${backend} | **Duration:** ${duration}s\n\n`);
+    } else {
+      summary = summary.addRaw(
+        `**Backend:** ${backend} | **Duration:** ${duration}s\n\n`
+      );
+    }
+
+    // Append kache list output
+    const listOutput = await runKache(["list"]);
+    if (listOutput.trim()) {
+      summary = summary.addDetails(
+        "Cache entries (`kache list`)",
+        `\`\`\`\n${listOutput}\n\`\`\``
+      );
+    }
+
+    await summary.write();
+  } catch (error) {
+    // Post step should not fail the build
+    core.warning(`kache post step failed: ${error.message}`);
+  }
+}
+
+run();
