@@ -57,6 +57,11 @@ async function run() {
     core.exportVariable("RUSTC_WRAPPER", kacheBin);
     core.info(`RUSTC_WRAPPER=${kacheBin}`);
 
+    // Enable kache debug logging (unless user already set KACHE_LOG)
+    if (!process.env.KACHE_LOG) {
+      core.exportVariable("KACHE_LOG", "kache=info");
+    }
+
     // Export S3 env vars if configured
     const s3Vars = {
       "s3-bucket": "KACHE_S3_BUCKET",

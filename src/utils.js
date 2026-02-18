@@ -236,6 +236,7 @@ function parseEvents() {
           name: e.crate_name,
           elapsed_ms: e.elapsed_ms || 0,
           size: e.size || 0,
+          cache_key: e.cache_key || "",
         });
         break;
       case "error":
@@ -303,20 +304,34 @@ function buildCommentBody(stats, backend, duration) {
   // Top cache misses
   if (stats.missedCrates.length > 0) {
     const top = stats.missedCrates.slice(0, 10);
+    const hasKeys = top.some((c) => c.cache_key);
     lines.push("");
     lines.push("<details>");
     lines.push(`<summary>Cache misses (${stats.misses} crates)</summary>`);
     lines.push("");
-    lines.push("| Crate | Compile time | Size |");
-    lines.push("|-------|-------------|------|");
-    for (const c of top) {
-      lines.push(
-        `| \`${c.name}\` | ${formatMs(c.elapsed_ms)} | ${formatBytes(c.size)} |`
-      );
+    if (hasKeys) {
+      lines.push("| Crate | Compile time | Size | Key |");
+      lines.push("|-------|-------------|------|-----|");
+      for (const c of top) {
+        const key = c.cache_key ? `\`${c.cache_key.slice(0, 12)}\` ` : "";
+        lines.push(
+          `| \`${c.name}\` | ${formatMs(c.elapsed_ms)} | ${formatBytes(c.size)} | ${key}|`
+        );
+      }
+    } else {
+      lines.push("| Crate | Compile time | Size |");
+      lines.push("|-------|-------------|------|");
+      for (const c of top) {
+        lines.push(
+          `| \`${c.name}\` | ${formatMs(c.elapsed_ms)} | ${formatBytes(c.size)} |`
+        );
+      }
     }
     if (stats.missedCrates.length > 10) {
+      const cols = hasKeys ? 4 : 3;
+      const empties = "| ".repeat(cols - 1);
       lines.push(
-        `| *... ${stats.missedCrates.length - 10} more* | | |`
+        `| *... ${stats.missedCrates.length - 10} more* ${empties}|`
       );
     }
     lines.push("");
