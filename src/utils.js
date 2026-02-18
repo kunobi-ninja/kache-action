@@ -116,10 +116,14 @@ function getCacheDir() {
   return path.join(home, ".cache", "kache");
 }
 
-/** Build a GitHub Actions cache key from Cargo.lock files */
+/** Build a GitHub Actions cache key from Cargo.lock files and kache version.
+ *  Including the kache version ensures that binary upgrades (which may change
+ *  cache key computation) invalidate stale caches. GH Actions cache is immutable
+ *  so without this, old entries would persist forever after a kache update. */
 async function buildCacheKey() {
   const prefix = core.getInput("cache-key-prefix") || "kache";
   const platform = `${os.platform()}-${os.arch()}`;
+  const kacheVersion = process.env.KACHE_VERSION || "unknown";
 
   // Hash all Cargo.lock files in the workspace
   const pattern = "**/Cargo.lock";
@@ -135,8 +139,8 @@ async function buildCacheKey() {
     lockHash = hasher.digest("hex").slice(0, 16);
   }
 
-  const key = `${prefix}-${platform}-${lockHash}`;
-  const restoreKeys = [`${prefix}-${platform}-`];
+  const key = `${prefix}-${kacheVersion}-${platform}-${lockHash}`;
+  const restoreKeys = [`${prefix}-${kacheVersion}-${platform}-`];
   return { key, restoreKeys };
 }
 

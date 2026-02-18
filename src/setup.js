@@ -62,6 +62,10 @@ async function run() {
       core.exportVariable("KACHE_LOG", "kache=info");
     }
 
+    // Export version so buildCacheKey() can include it in the GH cache key.
+    // This ensures kache upgrades invalidate stale caches (GH cache is immutable).
+    core.exportVariable("KACHE_VERSION", version);
+
     // Export S3 env vars if configured
     const s3Vars = {
       "s3-bucket": "KACHE_S3_BUCKET",
@@ -107,6 +111,7 @@ async function run() {
     core.saveState("start-time", Date.now().toString());
     core.saveState("s3-configured", s3 ? "true" : "false");
     core.saveState("gh-cache", ghCache ? "true" : "false");
+    core.saveState("kache-version", version);
   } catch (error) {
     core.setFailed(error.message);
   }
