@@ -280,16 +280,9 @@ function formatMs(ms) {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-/** Build a markdown PR comment body from event stats */
-function buildCommentBody(stats, backend, duration) {
+/** Build stats table + cache misses markdown (shared by PR comment and job summary) */
+function buildStatsMarkdown(stats, backend, duration) {
   const lines = [];
-
-  lines.push("### kache build cache");
-  lines.push("");
-  lines.push(
-    `**${stats.hitRate}%** hit rate \u2014 ${stats.hits}/${stats.total} crates from cache, ${stats.misses} compiled`
-  );
-  lines.push("");
 
   // Stats table
   lines.push("| Metric | Value |");
@@ -342,6 +335,20 @@ function buildCommentBody(stats, backend, duration) {
     lines.push("</details>");
   }
 
+  return lines.join("\n");
+}
+
+/** Build a markdown PR comment body from event stats */
+function buildCommentBody(stats, backend, duration) {
+  const lines = [];
+
+  lines.push("### kache build cache");
+  lines.push("");
+  lines.push(
+    `**${stats.hitRate}%** hit rate \u2014 ${stats.hits}/${stats.total} crates from cache, ${stats.misses} compiled`
+  );
+  lines.push("");
+  lines.push(buildStatsMarkdown(stats, backend, duration));
   lines.push("");
   lines.push("*Posted by [kache-action](https://github.com/kunobi-ninja/kache-action)*");
 
@@ -407,6 +414,7 @@ module.exports = {
   saveCache,
   clearEventLog,
   parseEvents,
+  buildStatsMarkdown,
   buildCommentBody,
   postOrUpdateComment,
 };

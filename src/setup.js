@@ -92,9 +92,19 @@ async function run() {
       core.exportVariable("KACHE_CACHE_EXECUTABLES", "1");
     }
 
-    // Restore cache: S3 sync or GitHub Actions cache
+    // Restore cache: S3 (daemon auto-prefetches from manifest), sync (legacy), or GitHub Actions cache
     const s3 = isS3Configured();
     const ghCache = useGitHubCache();
+
+    // Export manifest config as env vars for the daemon's auto-prefetch
+    if (s3) {
+      const manifestKey = core.getInput("manifest-key");
+      if (manifestKey) core.exportVariable("KACHE_MANIFEST_KEY", manifestKey);
+      const minMs = core.getInput("min-compile-ms");
+      if (minMs && minMs !== "1000") core.exportVariable("KACHE_MIN_COMPILE_MS", minMs);
+      const warm = core.getInput("warm") !== "false";
+      if (!warm) core.exportVariable("KACHE_MIN_COMPILE_MS", "999999999");
+    }
 
     if (s3 && core.getInput("sync") === "true") {
       core.info("Pulling remote cache from S3...");

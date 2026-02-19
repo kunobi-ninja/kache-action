@@ -39,9 +39,21 @@ inputs:
     required: false
     default: "kache"
   sync:
-    description: "Pull remote cache on setup"
+    description: "Pull ALL remote cache on setup (slow, prefer warm)"
+    required: false
+    default: "false"
+  warm:
+    description: "Auto-prefetch expensive artifacts from build manifest on daemon startup"
     required: false
     default: "true"
+  manifest-key:
+    description: "Manifest key for scoping builds (default: target triple). Use different keys for clippy, test, release builds sharing the same S3 bucket."
+    required: false
+    default: ""
+  min-compile-ms:
+    description: "Skip prefetching crates that compiled faster than this (ms). Cheaper to recompile."
+    required: false
+    default: "1000"
   token:
     description: "GitHub token for releases API and PR comments (needs pull-requests: write for comments)"
     required: false

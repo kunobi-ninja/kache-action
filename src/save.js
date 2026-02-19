@@ -3,6 +3,7 @@ const {
   runKache,
   saveCache,
   parseEvents,
+  buildStatsMarkdown,
   buildCommentBody,
   postOrUpdateComment,
 } = require("./utils");
@@ -14,6 +15,13 @@ async function run() {
 
     // Push cache: S3 or GitHub Actions cache
     if (s3Configured) {
+      // Save manifest first — records which keys were used + cost data for next warm
+      const saveArgs = ["save-manifest"];
+      const manifestKey = core.getInput("manifest-key");
+      if (manifestKey) saveArgs.push("--manifest-key", manifestKey);
+      core.info("Saving build manifest...");
+      await runKache(saveArgs);
+
       core.info("Pushing cache to S3...");
       await runKache(["sync", "--push"]);
     } else if (ghCache) {
@@ -53,19 +61,11 @@ async function run() {
         .addRaw(
           `**${stats.hitRate}%** hit rate \u2014 ${stats.hits}/${stats.total} crates from cache, ${stats.misses} compiled\n\n`
         )
-        .addRaw(`**Backend:** ${backend} | **Duration:** ${duration}s\n\n`);
+        .addRaw(buildStatsMarkdown(stats, backend, duration))
+        .addRaw("\n");
     } else {
       summary = summary.addRaw(
         `**Backend:** ${backend} | **Duration:** ${duration}s\n\n`
-      );
-    }
-
-    // Append kache list output
-    const listOutput = await runKache(["list"]);
-    if (listOutput.trim()) {
-      summary = summary.addDetails(
-        "Cache entries (`kache list`)",
-        `\`\`\`\n${listOutput}\n\`\`\``
       );
     }
 
