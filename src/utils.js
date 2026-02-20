@@ -26,15 +26,24 @@ function getTarget() {
   throw new Error(`Unsupported platform: ${platform}-${arch}`);
 }
 
-/** Fetch latest release tag from kunobi-ninja/kache. Returns null if no release exists. */
+/** Fetch latest release tag from kunobi-ninja/kache that has binary assets.
+ *  Skips releases where binaries haven't been uploaded yet (e.g. a tag was
+ *  just pushed and the release build is still in progress). */
 async function getLatestVersion(token) {
   const octokit = github.getOctokit(token);
   try {
-    const { data } = await octokit.rest.repos.getLatestRelease({
+    const { data: releases } = await octokit.rest.repos.listReleases({
       owner: "kunobi-ninja",
       repo: "kache",
+      per_page: 5,
     });
-    return data.tag_name;
+    for (const release of releases) {
+      if (release.draft || release.prerelease) continue;
+      if (release.assets && release.assets.length > 0) {
+        return release.tag_name;
+      }
+    }
+    return null;
   } catch (err) {
     if (err.status === 404) return null;
     throw err;
