@@ -117,6 +117,12 @@ async function run() {
     // Clear event log so we only capture this run's events
     clearEventLog();
 
+    // Start daemon early so manifest prefetch races against cargo fetch, not compilation
+    if (s3) {
+      core.info("Starting kache daemon for early prefetch...");
+      await runKache(["daemon", "start"]);
+    }
+
     // Save state for post step
     core.saveState("start-time", Date.now().toString());
     core.saveState("s3-configured", s3 ? "true" : "false");

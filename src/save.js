@@ -49,7 +49,13 @@ async function run() {
       try {
         await postOrUpdateComment(body, token);
       } catch (err) {
-        core.warning(`Failed to post PR comment: ${err.message}`);
+        if (err.message?.includes("Resource not accessible")) {
+          core.info(
+            "Skipping PR comment — token lacks pull-requests: write permission"
+          );
+        } else {
+          core.warning(`Failed to post PR comment: ${err.message}`);
+        }
       }
     }
 
