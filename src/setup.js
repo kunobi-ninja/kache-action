@@ -10,10 +10,18 @@ const {
   useGitHubCache,
   restoreCache,
   clearEventLog,
+  isNoCacheRequested,
 } = require("./utils");
 
 async function run() {
   try {
+    // Allow PRs to opt out of caching via [no-cache] in the description
+    if (isNoCacheRequested()) {
+      core.info("[no-cache] found in PR description — skipping kache setup");
+      core.saveState("no-cache", "true");
+      return;
+    }
+
     const token = core.getInput("token");
     const target = getTarget();
 
