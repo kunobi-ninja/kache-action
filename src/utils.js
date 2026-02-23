@@ -411,6 +411,13 @@ async function postOrUpdateComment(body, token) {
   }
 }
 
+/** Check if caching is disabled via [no-cache] in the PR description */
+function isNoCacheRequested() {
+  const context = github.context;
+  const body = context.payload.pull_request?.body || "";
+  return body.includes("[no-cache]");
+}
+
 module.exports = {
   getTarget,
   getLatestVersion,
@@ -426,4 +433,5 @@ module.exports = {
   buildStatsMarkdown,
   buildCommentBody,
   postOrUpdateComment,
+  isNoCacheRequested,
 };

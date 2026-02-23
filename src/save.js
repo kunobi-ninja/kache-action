@@ -10,6 +10,12 @@ const {
 
 async function run() {
   try {
+    // Skip post step if [no-cache] was detected during setup
+    if (core.getState("no-cache") === "true") {
+      core.info("[no-cache] — skipping kache post step");
+      return;
+    }
+
     const s3Configured = core.getState("s3-configured") === "true";
     const ghCache = core.getState("gh-cache") === "true";
 
