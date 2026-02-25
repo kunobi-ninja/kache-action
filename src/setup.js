@@ -104,6 +104,25 @@ async function run() {
     const s3 = isS3Configured();
     const ghCache = useGitHubCache();
 
+    // Warn when kache provides limited or no value in CI
+    if (!s3 && !ghCache) {
+      core.warning(
+        "kache: no S3 remote configured and GitHub Actions cache is disabled — " +
+        "skipping RUSTC_WRAPPER. Without persistent storage, kache adds overhead " +
+        "but provides no caching benefit in CI. Configure s3-bucket or enable " +
+        "github-cache to use kache."
+      );
+      return;
+    }
+    if (!s3 && ghCache) {
+      core.warning(
+        "kache: no S3 remote configured — falling back to GitHub Actions cache. " +
+        "This provides basic caching but S3/R2 is recommended for best performance " +
+        "(faster restore, async uploads, cross-branch sharing). " +
+        "See: https://github.com/kunobi-ninja/kache#remote-cache"
+      );
+    }
+
     // Export manifest config as env vars for the daemon's auto-prefetch
     if (s3) {
       const manifestKey = core.getInput("manifest-key");
