@@ -411,7 +411,9 @@ function buildReportMarkdown(report, backend) {
     lines.push(`| Uploaded | ${formatBytes(n.bytes_up)} (${n.uploads_ok} crates) |`);
     lines.push(`| Avg download latency | ${Math.round(n.avg_download_ms)}ms |`);
     lines.push(`| P95 download latency | ${n.p95_download_ms}ms |`);
-    lines.push(`| Throughput | ${n.throughput_mbps.toFixed(1)} MB/s |`);
+    const netTp = n.network_throughput_mbps || n.throughput_mbps;
+    lines.push(`| Throughput (network) | ${netTp.toFixed(1)} MB/s |`);
+    lines.push(`| Throughput (incl. decompress) | ${n.throughput_mbps.toFixed(1)} MB/s |`);
     if (n.downloads_failed > 0) {
       lines.push(`| Failed downloads | ${n.downloads_failed} |`);
     }
