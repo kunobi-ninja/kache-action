@@ -414,6 +414,17 @@ function buildReportMarkdown(report, backend) {
     const netTp = n.network_throughput_mbps || n.throughput_mbps;
     lines.push(`| Throughput (network) | ${netTp.toFixed(1)} MB/s |`);
     lines.push(`| Throughput (incl. decompress) | ${n.throughput_mbps.toFixed(1)} MB/s |`);
+    if (n.compression_ratio > 0) {
+      lines.push(`| Compression ratio | ${n.compression_ratio.toFixed(1)}x (${formatBytes(n.original_bytes_down)} → ${formatBytes(n.bytes_down)}) |`);
+    }
+    if (n.total_decompress_ms > 0 || n.total_disk_io_ms > 0) {
+      const totalNetMs = Math.round(n.avg_download_ms * n.downloads_ok);
+      lines.push(`| Time breakdown | network ${totalNetMs}ms, decompress ${n.total_decompress_ms}ms, disk I/O ${n.total_disk_io_ms}ms |`);
+    }
+    if (n.blobs_total > 0) {
+      const pct = ((n.blobs_skipped / n.blobs_total) * 100).toFixed(0);
+      lines.push(`| Blob dedup | ${n.blobs_skipped} / ${n.blobs_total} already local (${pct}% skipped) |`);
+    }
     if (n.downloads_failed > 0) {
       lines.push(`| Failed downloads | ${n.downloads_failed} |`);
     }
