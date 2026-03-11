@@ -365,74 +365,82 @@ function buildReportMarkdown(report, backend) {
   const totalHits = s.local_hits + s.prefetch_hits + s.remote_hits;
   const lines = [];
 
-  // Summary table
-  lines.push("| Metric | Value |");
-  lines.push("|--------|-------|");
-  lines.push(`| Hit rate (count) | ${s.hit_rate_pct.toFixed(1)}% |`);
-  if (s.weighted_hit_rate_pct != null) {
-    lines.push(`| Hit rate (weighted) | ${s.weighted_hit_rate_pct.toFixed(1)}% |`);
-  }
-  lines.push(`| Time saved | ${formatMs(s.time_saved_ms)} |`);
-  lines.push(`| Total crates | ${s.total_crates} |`);
-  lines.push(`| Hits | ${totalHits} (local: ${s.local_hits}, prefetch: ${s.prefetch_hits}, remote: ${s.remote_hits}) |`);
-  lines.push(`| Misses | ${s.misses} |`);
+  // ── 1. Key metrics (always visible, compact) ──
+  lines.push(`| | |`);
+  lines.push(`|---|---|`);
+  lines.push(`| **Crates** | ${totalHits} cached / ${s.misses} compiled / ${s.total_crates} total |`);
+  lines.push(`| **Hit rate** | ${s.hit_rate_pct.toFixed(1)}%${s.weighted_hit_rate_pct != null ? ` (${s.weighted_hit_rate_pct.toFixed(1)}% weighted by cost)` : ""} |`);
+  lines.push(`| **Time saved** | ${formatMs(s.time_saved_ms)} |`);
   if (s.errors > 0) {
-    lines.push(`| Errors | ${s.errors} |`);
+    lines.push(`| **Errors** | ${s.errors} |`);
   }
-  lines.push(`| Backend | ${backend} |`);
 
-  // Timing breakdown
-  const totalMs = t.hit_time_ms + t.miss_time_ms;
-  if (totalMs > 0) {
-    const hitPct = ((t.hit_time_ms / totalMs) * 100).toFixed(1);
-    const missPct = ((t.miss_time_ms / totalMs) * 100).toFixed(1);
+  // ── 2. Suggestions (always visible — actionable) ──
+  if (report.suggestions && report.suggestions.length > 0) {
+    lines.push("");
+    for (const sg of report.suggestions) {
+      lines.push(`> ${sg}`);
+    }
+  }
+
+  // ── 3. Top misses (collapsed — most actionable detail) ──
+  if (report.top_misses && report.top_misses.length > 0) {
+    const top = report.top_misses.slice(0, 10);
     lines.push("");
     lines.push("<details>");
-    lines.push("<summary>Timing breakdown</summary>");
+    lines.push(`<summary><strong>Top cache misses</strong> (${s.misses} compiled)</summary>`);
     lines.push("");
-    lines.push("| Phase | Time | % of total |");
-    lines.push("|-------|------|------------|");
-    lines.push(`| Cache hits (wrapper) | ${formatMs(t.hit_time_ms)} | ${hitPct}% |`);
-    lines.push(`| Misses (compile) | ${formatMs(t.miss_time_ms)} | ${missPct}% |`);
+    lines.push("| Crate | Compile time | Size |");
+    lines.push("|-------|-------------|------|");
+    for (const c of top) {
+      lines.push(`| \`${c.crate_name}\` | ${formatMs(c.compile_time_ms)} | ${formatBytes(c.size)} |`);
+    }
+    if (s.misses > 10) {
+      lines.push(`| *... ${s.misses - 10} more* | | |`);
+    }
     lines.push("");
     lines.push("</details>");
   }
 
-  // Network
+  // ── 4. Network + Transfer details (collapsed) ──
   if (report.network) {
     const n = report.network;
     lines.push("");
     lines.push("<details>");
-    lines.push("<summary>Network</summary>");
-    lines.push("");
-    lines.push("| Metric | Value |");
-    lines.push("|--------|-------|");
-    lines.push(`| Downloaded | ${formatBytes(n.bytes_down)} (${n.downloads_ok} crates) |`);
-    lines.push(`| Uploaded | ${formatBytes(n.bytes_up)} (${n.uploads_ok} crates) |`);
-    lines.push(`| Avg download latency | ${Math.round(n.avg_download_ms)}ms |`);
-    lines.push(`| P95 download latency | ${n.p95_download_ms}ms |`);
+
+    // Build a compact summary for the details toggle
     const netTp = n.network_throughput_mbps || n.throughput_mbps;
-    lines.push(`| Throughput (network) | ${netTp.toFixed(1)} MB/s |`);
-    lines.push(`| Throughput (incl. decompress) | ${n.throughput_mbps.toFixed(1)} MB/s |`);
+    lines.push(`<summary><strong>Network</strong> — ${formatBytes(n.bytes_down)} downloaded, ${netTp.toFixed(0)} MB/s</summary>`);
+    lines.push("");
+
+    // Transfer summary
+    lines.push("| | |");
+    lines.push("|---|---|");
+    lines.push(`| Downloaded | ${formatBytes(n.bytes_down)} (${n.downloads_ok} crates) |`);
+    if (n.uploads_ok > 0 || n.uploads_failed > 0) {
+      lines.push(`| Uploaded | ${formatBytes(n.bytes_up)} (${n.uploads_ok} crates) |`);
+    }
+    lines.push(`| Download time | avg ${formatMs(Math.round(n.avg_download_ms))} · p95 ${formatMs(n.p95_download_ms)} |`);
+    lines.push(`| Throughput | ${netTp.toFixed(1)} MB/s network · ${n.throughput_mbps.toFixed(1)} MB/s end-to-end |`);
     if (n.compression_ratio > 0) {
-      lines.push(`| Compression ratio | ${n.compression_ratio.toFixed(1)}x (${formatBytes(n.original_bytes_down)} → ${formatBytes(n.bytes_down)}) |`);
+      lines.push(`| Compression | ${n.compression_ratio.toFixed(1)}x (${formatBytes(n.original_bytes_down)} → ${formatBytes(n.bytes_down)}) |`);
     }
     if (n.total_decompress_ms > 0 || n.total_disk_io_ms > 0) {
       const totalNetMs = Math.round(n.avg_download_ms * n.downloads_ok);
-      lines.push(`| Time breakdown | network ${totalNetMs}ms, decompress ${n.total_decompress_ms}ms, disk I/O ${n.total_disk_io_ms}ms |`);
+      lines.push(`| Time split | network ${formatMs(totalNetMs)} · decompress ${formatMs(n.total_decompress_ms)} · disk ${formatMs(n.total_disk_io_ms)} |`);
     }
     if (n.blobs_total > 0) {
       const pct = ((n.blobs_skipped / n.blobs_total) * 100).toFixed(0);
-      lines.push(`| Blob dedup | ${n.blobs_skipped} / ${n.blobs_total} already local (${pct}% skipped) |`);
+      lines.push(`| Blob dedup | ${n.blobs_skipped}/${n.blobs_total} already local (${pct}% saved) |`);
     }
     if (n.downloads_failed > 0) {
-      lines.push(`| Failed downloads | ${n.downloads_failed} |`);
+      lines.push(`| ⚠ Failed downloads | ${n.downloads_failed} |`);
     }
     if (n.uploads_failed > 0) {
-      lines.push(`| Failed uploads | ${n.uploads_failed} |`);
+      lines.push(`| ⚠ Failed uploads | ${n.uploads_failed} |`);
     }
 
-    // Slowest downloads
+    // Slowest downloads (sub-table)
     if (n.slowest_downloads && n.slowest_downloads.length > 0) {
       const top = n.slowest_downloads.slice(0, 5);
       lines.push("");
@@ -441,53 +449,35 @@ function buildReportMarkdown(report, backend) {
       lines.push("| Crate | Size | Latency | Throughput |");
       lines.push("|-------|------|---------|------------|");
       for (const d of top) {
-        lines.push(`| \`${d.crate_name}\` | ${formatBytes(d.compressed_bytes)} | ${d.elapsed_ms}ms | ${d.throughput_mbps.toFixed(1)} MB/s |`);
+        lines.push(`| \`${d.crate_name}\` | ${formatBytes(d.compressed_bytes)} | ${formatMs(d.elapsed_ms)} | ${d.throughput_mbps.toFixed(1)} MB/s |`);
       }
     }
     lines.push("");
     lines.push("</details>");
   }
 
-  // Prefetch
+  // ── 5. Timing + Prefetch (collapsed) ──
+  const totalMs = t.hit_time_ms + t.miss_time_ms;
   const p = report.prefetch;
-  if (p.total_hits > 0) {
-    lines.push("");
-    lines.push(`**Prefetch:** ${p.prefetch_hits} / ${p.total_hits} hits (${p.contribution_pct.toFixed(1)}%)`);
-  }
-
-  // Top cache misses
-  if (report.top_misses && report.top_misses.length > 0) {
-    const top = report.top_misses.slice(0, 10);
-    const hasKeys = top.some((c) => c.cache_key);
+  if (totalMs > 0 || (p && p.total_hits > 0)) {
     lines.push("");
     lines.push("<details>");
-    lines.push(`<summary>Cache misses (${s.misses} crates)</summary>`);
+    lines.push(`<summary><strong>Timing & Prefetch</strong></summary>`);
     lines.push("");
-    if (hasKeys) {
-      lines.push("| Crate | Compile time | Size | Key |");
-      lines.push("|-------|-------------|------|-----|");
-      for (const c of top) {
-        const key = c.cache_key ? `\`${c.cache_key.slice(0, 12)}\` ` : "";
-        lines.push(`| \`${c.crate_name}\` | ${formatMs(c.compile_time_ms)} | ${formatBytes(c.size)} | ${key}|`);
-      }
-    } else {
-      lines.push("| Crate | Compile time | Size |");
-      lines.push("|-------|-------------|------|");
-      for (const c of top) {
-        lines.push(`| \`${c.crate_name}\` | ${formatMs(c.compile_time_ms)} | ${formatBytes(c.size)} |`);
-      }
+    if (totalMs > 0) {
+      const hitPct = ((t.hit_time_ms / totalMs) * 100).toFixed(1);
+      const missPct = ((t.miss_time_ms / totalMs) * 100).toFixed(1);
+      lines.push("| Phase | Time | % |");
+      lines.push("|-------|------|---|");
+      lines.push(`| Cache hits | ${formatMs(t.hit_time_ms)} | ${hitPct}% |`);
+      lines.push(`| Compiling misses | ${formatMs(t.miss_time_ms)} | ${missPct}% |`);
+    }
+    if (p && p.total_hits > 0) {
+      lines.push("");
+      lines.push(`**Prefetch:** ${p.prefetch_hits}/${p.total_hits} hits (${p.contribution_pct.toFixed(1)}%)`);
     }
     lines.push("");
     lines.push("</details>");
-  }
-
-  // Suggestions
-  if (report.suggestions && report.suggestions.length > 0) {
-    lines.push("");
-    lines.push("**Suggestions:**");
-    for (const s of report.suggestions) {
-      lines.push(`- ${s}`);
-    }
   }
 
   return lines.join("\n");
