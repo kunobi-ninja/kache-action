@@ -10,6 +10,7 @@ const {
   useGitHubCache,
   restoreCache,
   clearEventLog,
+  clearTransferLog,
   isNoCacheRequested,
 } = require("./utils");
 
@@ -141,8 +142,9 @@ async function run() {
       await restoreCache();
     }
 
-    // Clear event log so we only capture this run's events
+    // Clear event and transfer logs so we only capture this run's data
     clearEventLog();
+    clearTransferLog();
 
     // Start daemon early so manifest prefetch races against cargo fetch, not compilation
     if (s3) {

@@ -4,6 +4,7 @@ const {
   saveCache,
   parseEvents,
   buildStatsMarkdown,
+  buildReportMarkdown,
   buildCommentBody,
   postOrUpdateComment,
 } = require("./utils");
@@ -35,8 +36,17 @@ async function run() {
       await saveCache();
     }
 
-    // Parse build events from this run
-    const stats = parseEvents();
+    // Try kache report (rich), fall back to parseEvents (legacy)
+    let report = null;
+    try {
+      const json = await runKache(["report", "--format", "json", "--since", "24h"]);
+      if (json && json.trim()) {
+        report = JSON.parse(json);
+      }
+    } catch {
+      // Older kache without report command — fall back to legacy
+    }
+    const stats = report ? null : parseEvents();
 
     const startTime = parseInt(core.getState("start-time") || "0", 10);
     const duration = startTime
@@ -49,9 +59,15 @@ async function run() {
         : "local only";
 
     // Post/update sticky PR comment
-    if (stats && stats.total > 0) {
+    const hasData = report
+      ? report.summary && report.summary.total_crates > 0
+      : stats && stats.total > 0;
+
+    if (hasData) {
       const token = core.getInput("token");
-      const body = buildCommentBody(stats, backend, duration);
+      const body = report
+        ? buildCommentBody(report, backend)
+        : buildCommentBody(stats, backend, duration);
       try {
         await postOrUpdateComment(body, token);
       } catch (err) {
@@ -68,7 +84,16 @@ async function run() {
     // Write job summary (always, even outside PRs)
     let summary = core.summary.addHeading("Kache Build Cache", 2);
 
-    if (stats && stats.total > 0) {
+    if (report && report.summary && report.summary.total_crates > 0) {
+      const s = report.summary;
+      const totalHits = s.local_hits + s.prefetch_hits + s.remote_hits;
+      summary = summary
+        .addRaw(
+          `**${s.hit_rate_pct.toFixed(1)}%** hit rate \u2014 ${totalHits}/${s.total_crates} crates from cache, ${s.misses} compiled\n\n`
+        )
+        .addRaw(buildReportMarkdown(report, backend))
+        .addRaw("\n");
+    } else if (stats && stats.total > 0) {
       summary = summary
         .addRaw(
           `**${stats.hitRate}%** hit rate \u2014 ${stats.hits}/${stats.total} crates from cache, ${stats.misses} compiled\n\n`

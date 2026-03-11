@@ -209,6 +209,17 @@ function clearEventLog() {
   }
 }
 
+/** Clear the transfer log so we only capture this run's transfers */
+function clearTransferLog() {
+  const logPath = path.join(getCacheDir(), "transfers.jsonl");
+  try {
+    fs.writeFileSync(logPath, "");
+    core.info("Cleared kache transfer log");
+  } catch {
+    // Log may not exist yet — that's fine
+  }
+}
+
 /** Parse events.jsonl and compute stats for this run */
 function parseEvents() {
   const logPath = getEventLogPath();
@@ -347,10 +358,156 @@ function buildStatsMarkdown(stats, backend, duration) {
   return lines.join("\n");
 }
 
-/** Build a markdown PR comment body from event stats */
-function buildCommentBody(stats, backend, duration) {
+/** Build a rich markdown report from kache report JSON output */
+function buildReportMarkdown(report, backend) {
+  const s = report.summary;
+  const t = report.timing;
+  const totalHits = s.local_hits + s.prefetch_hits + s.remote_hits;
   const lines = [];
 
+  // Summary table
+  lines.push("| Metric | Value |");
+  lines.push("|--------|-------|");
+  lines.push(`| Hit rate (count) | ${s.hit_rate_pct.toFixed(1)}% |`);
+  if (s.weighted_hit_rate_pct != null) {
+    lines.push(`| Hit rate (weighted) | ${s.weighted_hit_rate_pct.toFixed(1)}% |`);
+  }
+  lines.push(`| Time saved | ${formatMs(s.time_saved_ms)} |`);
+  lines.push(`| Total crates | ${s.total_crates} |`);
+  lines.push(`| Hits | ${totalHits} (local: ${s.local_hits}, prefetch: ${s.prefetch_hits}, remote: ${s.remote_hits}) |`);
+  lines.push(`| Misses | ${s.misses} |`);
+  if (s.errors > 0) {
+    lines.push(`| Errors | ${s.errors} |`);
+  }
+  lines.push(`| Backend | ${backend} |`);
+
+  // Timing breakdown
+  const totalMs = t.hit_time_ms + t.miss_time_ms;
+  if (totalMs > 0) {
+    const hitPct = ((t.hit_time_ms / totalMs) * 100).toFixed(1);
+    const missPct = ((t.miss_time_ms / totalMs) * 100).toFixed(1);
+    lines.push("");
+    lines.push("<details>");
+    lines.push("<summary>Timing breakdown</summary>");
+    lines.push("");
+    lines.push("| Phase | Time | % of total |");
+    lines.push("|-------|------|------------|");
+    lines.push(`| Cache hits (wrapper) | ${formatMs(t.hit_time_ms)} | ${hitPct}% |`);
+    lines.push(`| Misses (compile) | ${formatMs(t.miss_time_ms)} | ${missPct}% |`);
+    lines.push("");
+    lines.push("</details>");
+  }
+
+  // Network
+  if (report.network) {
+    const n = report.network;
+    lines.push("");
+    lines.push("<details>");
+    lines.push("<summary>Network</summary>");
+    lines.push("");
+    lines.push("| Metric | Value |");
+    lines.push("|--------|-------|");
+    lines.push(`| Downloaded | ${formatBytes(n.bytes_down)} (${n.downloads_ok} crates) |`);
+    lines.push(`| Uploaded | ${formatBytes(n.bytes_up)} (${n.uploads_ok} crates) |`);
+    lines.push(`| Avg download latency | ${Math.round(n.avg_download_ms)}ms |`);
+    lines.push(`| P95 download latency | ${n.p95_download_ms}ms |`);
+    lines.push(`| Throughput | ${n.throughput_mbps.toFixed(1)} MB/s |`);
+    if (n.downloads_failed > 0) {
+      lines.push(`| Failed downloads | ${n.downloads_failed} |`);
+    }
+    if (n.uploads_failed > 0) {
+      lines.push(`| Failed uploads | ${n.uploads_failed} |`);
+    }
+
+    // Slowest downloads
+    if (n.slowest_downloads && n.slowest_downloads.length > 0) {
+      const top = n.slowest_downloads.slice(0, 5);
+      lines.push("");
+      lines.push("**Slowest downloads:**");
+      lines.push("");
+      lines.push("| Crate | Size | Latency | Throughput |");
+      lines.push("|-------|------|---------|------------|");
+      for (const d of top) {
+        lines.push(`| \`${d.crate_name}\` | ${formatBytes(d.compressed_bytes)} | ${d.elapsed_ms}ms | ${d.throughput_mbps.toFixed(1)} MB/s |`);
+      }
+    }
+    lines.push("");
+    lines.push("</details>");
+  }
+
+  // Prefetch
+  const p = report.prefetch;
+  if (p.total_hits > 0) {
+    lines.push("");
+    lines.push(`**Prefetch:** ${p.prefetch_hits} / ${p.total_hits} hits (${p.contribution_pct.toFixed(1)}%)`);
+  }
+
+  // Top cache misses
+  if (report.top_misses && report.top_misses.length > 0) {
+    const top = report.top_misses.slice(0, 10);
+    const hasKeys = top.some((c) => c.cache_key);
+    lines.push("");
+    lines.push("<details>");
+    lines.push(`<summary>Cache misses (${s.misses} crates)</summary>`);
+    lines.push("");
+    if (hasKeys) {
+      lines.push("| Crate | Compile time | Size | Key |");
+      lines.push("|-------|-------------|------|-----|");
+      for (const c of top) {
+        const key = c.cache_key ? `\`${c.cache_key.slice(0, 12)}\` ` : "";
+        lines.push(`| \`${c.crate_name}\` | ${formatMs(c.compile_time_ms)} | ${formatBytes(c.size)} | ${key}|`);
+      }
+    } else {
+      lines.push("| Crate | Compile time | Size |");
+      lines.push("|-------|-------------|------|");
+      for (const c of top) {
+        lines.push(`| \`${c.crate_name}\` | ${formatMs(c.compile_time_ms)} | ${formatBytes(c.size)} |`);
+      }
+    }
+    lines.push("");
+    lines.push("</details>");
+  }
+
+  // Suggestions
+  if (report.suggestions && report.suggestions.length > 0) {
+    lines.push("");
+    lines.push("**Suggestions:**");
+    for (const s of report.suggestions) {
+      lines.push(`- ${s}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+/** Build a markdown PR comment body — uses report if available, falls back to legacy stats */
+function buildCommentBody(reportOrStats, backendOrStats, durationOrBackend, maybeDuration) {
+  // Detect which call pattern: buildCommentBody(report, backend) vs buildCommentBody(stats, backend, duration)
+  const isReport = reportOrStats && reportOrStats.summary !== undefined;
+
+  if (isReport) {
+    const report = reportOrStats;
+    const backend = backendOrStats;
+    const s = report.summary;
+    const totalHits = s.local_hits + s.prefetch_hits + s.remote_hits;
+    const lines = [];
+    lines.push("### kache build cache");
+    lines.push("");
+    lines.push(
+      `**${s.hit_rate_pct.toFixed(1)}%** hit rate \u2014 ${totalHits}/${s.total_crates} crates from cache, ${s.misses} compiled | **${formatMs(s.time_saved_ms)} saved**`
+    );
+    lines.push("");
+    lines.push(buildReportMarkdown(report, backend));
+    lines.push("");
+    lines.push("*Posted by [kache-action](https://github.com/kunobi-ninja/kache-action)*");
+    return lines.join("\n");
+  }
+
+  // Legacy path
+  const stats = reportOrStats;
+  const backend = backendOrStats;
+  const duration = durationOrBackend;
+  const lines = [];
   lines.push("### kache build cache");
   lines.push("");
   lines.push(
@@ -360,7 +517,6 @@ function buildCommentBody(stats, backend, duration) {
   lines.push(buildStatsMarkdown(stats, backend, duration));
   lines.push("");
   lines.push("*Posted by [kache-action](https://github.com/kunobi-ninja/kache-action)*");
-
   return lines.join("\n");
 }
 
@@ -429,8 +585,10 @@ module.exports = {
   restoreCache,
   saveCache,
   clearEventLog,
+  clearTransferLog,
   parseEvents,
   buildStatsMarkdown,
+  buildReportMarkdown,
   buildCommentBody,
   postOrUpdateComment,
   isNoCacheRequested,
