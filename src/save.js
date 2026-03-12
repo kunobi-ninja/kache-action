@@ -4,9 +4,8 @@ const {
   saveCache,
   parseEvents,
   buildStatsMarkdown,
-  buildReportMarkdown,
-  buildCommentBody,
   postOrUpdateComment,
+  COMMENT_MARKER,
 } = require("./utils");
 
 async function run() {
@@ -36,18 +35,18 @@ async function run() {
       await saveCache();
     }
 
-    // Try kache report (rich), fall back to parseEvents (legacy)
-    let report = null;
+    // Get report markdown directly from kache (kache owns all rendering)
+    let reportMarkdown = null;
     try {
-      const json = await runKache(["report", "--format", "json", "--since", "24h"]);
-      if (json && json.trim()) {
-        report = JSON.parse(json);
+      const md = await runKache(["report", "--format", "github", "--since", "24h"]);
+      if (md && md.trim() && md.includes("kache build cache")) {
+        reportMarkdown = md.trim();
       }
     } catch {
-      // Older kache without report command — fall back to legacy
+      // Older kache without report/github format — fall back to legacy
     }
-    const stats = report ? null : parseEvents();
 
+    // Legacy fallback for older kache versions
     const startTime = parseInt(core.getState("start-time") || "0", 10);
     const duration = startTime
       ? ((Date.now() - startTime) / 1000).toFixed(1)
@@ -58,18 +57,29 @@ async function run() {
         ? "GitHub Actions cache"
         : "local only";
 
-    // Post/update sticky PR comment
-    const hasData = report
-      ? report.summary && report.summary.total_crates > 0
-      : stats && stats.total > 0;
+    let commentBody = reportMarkdown;
+    if (!commentBody) {
+      const stats = parseEvents();
+      if (stats && stats.total > 0) {
+        const lines = [];
+        lines.push("### kache build cache");
+        lines.push("");
+        lines.push(
+          `**${stats.hitRate}%** hit rate \u2014 ${stats.hits}/${stats.total} crates from cache, ${stats.misses} compiled`
+        );
+        lines.push("");
+        lines.push(buildStatsMarkdown(stats, backend, duration));
+        lines.push("");
+        lines.push("*Posted by [kache-action](https://github.com/kunobi-ninja/kache-action)*");
+        commentBody = lines.join("\n");
+      }
+    }
 
-    if (hasData) {
+    // Post/update sticky PR comment
+    if (commentBody) {
       const token = core.getInput("token");
-      const body = report
-        ? buildCommentBody(report, backend)
-        : buildCommentBody(stats, backend, duration);
       try {
-        await postOrUpdateComment(body, token);
+        await postOrUpdateComment(commentBody, token);
       } catch (err) {
         if (err.message?.includes("Resource not accessible")) {
           core.info(
@@ -83,29 +93,13 @@ async function run() {
 
     // Write job summary (always, even outside PRs)
     let summary = core.summary.addHeading("Kache Build Cache", 2);
-
-    if (report && report.summary && report.summary.total_crates > 0) {
-      const s = report.summary;
-      const totalHits = s.local_hits + s.prefetch_hits + s.remote_hits;
-      summary = summary
-        .addRaw(
-          `**${s.hit_rate_pct.toFixed(1)}%** hit rate \u2014 ${totalHits}/${s.total_crates} crates from cache, ${s.misses} compiled\n\n`
-        )
-        .addRaw(buildReportMarkdown(report, backend))
-        .addRaw("\n");
-    } else if (stats && stats.total > 0) {
-      summary = summary
-        .addRaw(
-          `**${stats.hitRate}%** hit rate \u2014 ${stats.hits}/${stats.total} crates from cache, ${stats.misses} compiled\n\n`
-        )
-        .addRaw(buildStatsMarkdown(stats, backend, duration))
-        .addRaw("\n");
+    if (commentBody) {
+      summary = summary.addRaw(commentBody).addRaw("\n");
     } else {
       summary = summary.addRaw(
         `**Backend:** ${backend} | **Duration:** ${duration}s\n\n`
       );
     }
-
     await summary.write();
   } catch (error) {
     // Post step should not fail the build
