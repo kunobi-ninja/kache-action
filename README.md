@@ -1,13 +1,13 @@
 # kache-action
 
-GitHub Action for [kache](https://github.com/zondax/kache) — a content-addressed Rust build cache.
+GitHub Action for [kache](https://github.com/kunobi-ninja/kache) — a content-addressed Rust build cache.
 
 Installs kache, sets it as `RUSTC_WRAPPER`, and persists the cache between runs. Works out of the box with GitHub's built-in cache, or with any S3-compatible backend.
 
 ## Usage
 
 ```yaml
-- uses: zondax/kache-action@v1
+- uses: kunobi-ninja/kache-action@v1
 ```
 
 That's it. This installs kache, sets `RUSTC_WRAPPER`, and uses GitHub Actions cache to persist artifacts between runs. No configuration needed.
@@ -17,7 +17,7 @@ That's it. This installs kache, sets `RUSTC_WRAPPER`, and uses GitHub Actions ca
 If you have an S3 bucket (or any S3-compatible storage like MinIO, R2, etc.), the action will use that instead of GitHub's cache:
 
 ```yaml
-- uses: zondax/kache-action@v1
+- uses: kunobi-ninja/kache-action@v1
   with:
     s3-bucket: my-build-cache
     s3-access-key-id: ${{ secrets.S3_ACCESS_KEY_ID }}
@@ -27,7 +27,7 @@ If you have an S3 bucket (or any S3-compatible storage like MinIO, R2, etc.), th
 For non-AWS providers, set `s3-endpoint`:
 
 ```yaml
-- uses: zondax/kache-action@v1
+- uses: kunobi-ninja/kache-action@v1
   with:
     s3-bucket: my-build-cache
     s3-endpoint: https://minio.internal:9000
@@ -45,7 +45,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: zondax/kache-action@v1
+      - uses: kunobi-ninja/kache-action@v1
         with:
           s3-bucket: my-build-cache
           s3-region: eu-west-1
@@ -93,7 +93,7 @@ GitHub Actions cache has a 10 GB limit per repo. For larger projects or shared c
 ## How it works
 
 **Setup step** (runs before your build):
-1. Downloads the kache binary from [GitHub Releases](https://github.com/zondax/kache/releases) and verifies its SHA256 checksum
+1. Downloads the kache binary from [GitHub Releases](https://github.com/kunobi-ninja/kache/releases) and verifies its SHA256 checksum
 2. Sets `RUSTC_WRAPPER=kache` and exports S3 env vars if configured
 3. Restores the cache — either `kache sync --pull` (S3) or `@actions/cache` restore (GitHub)
 
