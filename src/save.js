@@ -91,14 +91,17 @@ async function run() {
       }
     }
 
-    // Write job summary (always, even outside PRs)
-    let summary = core.summary.addHeading("Kache Build Cache", 2);
+    // Write job summary (always, even outside PRs).
+    // commentBody from `kache report` already carries its own
+    // "### kache build cache" title, so only add a heading for the
+    // legacy fallback below to avoid a double title.
+    let summary = core.summary;
     if (commentBody) {
       summary = summary.addRaw(commentBody).addRaw("\n");
     } else {
-      summary = summary.addRaw(
-        `**Backend:** ${backend} | **Duration:** ${duration}s\n\n`
-      );
+      summary = summary
+        .addHeading("Kache Build Cache", 2)
+        .addRaw(`**Backend:** ${backend} | **Duration:** ${duration}s\n\n`);
     }
     await summary.write();
   } catch (error) {
