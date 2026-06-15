@@ -85,10 +85,12 @@ GitHub Actions cache has a 10 GB limit per repo. For larger projects or shared c
 | `s3-access-key-id` | — | S3 access key ID |
 | `s3-secret-access-key` | — | S3 secret access key |
 | `cache-executables` | `false` | Also cache bin/dylib/proc-macro outputs |
+| `max-size` | `50GiB` (kache default) | Max local kache store size before LRU eviction (e.g. `100GiB`). Maps to `KACHE_MAX_SIZE`. Controls the **local** store, not a remote/S3 cap. |
 | `github-cache` | `true` | Use GitHub Actions cache when S3 is not configured |
 | `cache-key-prefix` | `kache` | Prefix for the GitHub Actions cache key |
 | `sync` | `true` | Pull remote cache on setup |
 | `token` | `${{ github.token }}` | GitHub token for fetching releases and posting PR comments |
+| `pr-comment` | `true` | Post/update a sticky PR comment with cache stats. The job summary is always written regardless. |
 
 ## How it works
 
@@ -112,6 +114,8 @@ On pull requests, the post step posts (or updates) a comment showing:
 - A collapsible table of cache misses sorted by compile time, so you can see which crates are the most expensive to rebuild
 
 The comment is updated in-place on re-runs — no spam. Requires `pull-requests: write` permission on the token (the default `GITHUB_TOKEN` has this in most setups).
+
+In matrix builds, each job posts its own comment, labeled with the job name and target triple (e.g. `### kache build cache — build (x86_64-unknown-linux-musl)`), so stats are never ambiguous or overwritten between jobs. To turn the comment off entirely and rely on the per-job job summary instead, set `pr-comment: false`.
 
 ## License
 
