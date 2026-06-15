@@ -120519,8 +120519,18 @@ async function run() {
       commentBody = labelHeading(commentBody, jobLabel());
     }
 
-    // Post/update sticky PR comment (opt-out via pr-comment: false)
-    const prCommentEnabled = core.getInput("pr-comment") !== "false";
+    // Post/update sticky PR comment (opt-out via pr-comment: false).
+    // getBooleanInput is case-insensitive and rejects typos; on an invalid
+    // value we warn and default to enabled rather than throwing (which would
+    // skip the always-on job summary below).
+    let prCommentEnabled = true;
+    try {
+      prCommentEnabled = core.getBooleanInput("pr-comment");
+    } catch {
+      core.warning(
+        "Invalid pr-comment value (expected true/false) — defaulting to true"
+      );
+    }
     if (prCommentEnabled && commentBody) {
       const token = core.getInput("token");
       try {
