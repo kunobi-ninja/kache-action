@@ -78451,6 +78451,8 @@ module.exports = {
   clearTransferLog,
   parseEvents,
   parseEventsFrom,
+  formatBytes,
+  formatMs,
   buildStatsMarkdown,
   postOrUpdateComment,
   isNoCacheRequested,
