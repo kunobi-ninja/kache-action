@@ -77983,6 +77983,10 @@ const fs = __nccwpck_require__(79896);
 const os = __nccwpck_require__(70857);
 const path = __nccwpck_require__(16928);
 
+/** Heading text emitted by `kache report --format github`; the JS guard and the
+ *  per-job heading label both key off this literal, so keep them in sync. */
+const REPORT_HEADING = "kache build cache";
+
 /** Map runner OS+arch to Rust target triple */
 function getTarget() {
   const platform = os.platform();
@@ -78333,7 +78337,13 @@ function buildStatsMarkdown(stats, backend, duration) {
 /** Human-readable label identifying this matrix leg: "<job> (<target>)". */
 function jobLabel() {
   const job = github.context.job || "build";
-  return `${job} (${getTarget()})`;
+  let target;
+  try {
+    target = getTarget();
+  } catch {
+    target = "unknown";
+  }
+  return `${job} (${target})`;
 }
 
 /** Per-job sticky-comment marker so parallel matrix jobs don't clobber each
@@ -78397,10 +78407,8 @@ async function postOrUpdateComment(body, token) {
  *  so the PR comment is self-identifying regardless of whether the body came
  *  from `kache report` or the legacy JS fallback. No-op if no such heading. */
 function labelHeading(markdown, label) {
-  return markdown.replace(
-    /^(#{1,6}\s+kache build cache)(.*)$/im,
-    `$1 — ${label}$2`
-  );
+  const re = new RegExp(`^(#{1,6}\\s+${REPORT_HEADING})(.*)$`, "im");
+  return markdown.replace(re, `$1 — ${label}$2`);
 }
 
 /** Check if caching is disabled via [no-cache] in the PR description */
@@ -78411,6 +78419,7 @@ function isNoCacheRequested() {
 }
 
 module.exports = {
+  REPORT_HEADING,
   getTarget,
   getLatestVersion,
   downloadAndVerify,

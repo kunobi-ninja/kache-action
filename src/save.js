@@ -1,5 +1,6 @@
 const core = require("@actions/core");
 const {
+  REPORT_HEADING,
   runKache,
   saveCache,
   parseEvents,
@@ -40,7 +41,7 @@ async function run() {
     let reportMarkdown = null;
     try {
       const md = await runKache(["report", "--format", "github", "--since", "24h"]);
-      if (md && md.trim() && md.includes("kache build cache")) {
+      if (md && md.trim() && md.includes(REPORT_HEADING)) {
         reportMarkdown = md.trim();
       }
     } catch {
@@ -97,6 +98,7 @@ async function run() {
         }
       }
     } else if (!prCommentEnabled) {
+      // only log the explicit opt-out; "enabled but no body" stays silent
       core.info("PR comment disabled (pr-comment: false)");
     }
 
