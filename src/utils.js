@@ -140,13 +140,13 @@ function getCacheDir() {
  *  Including the kache version ensures that binary upgrades (which may change
  *  cache key computation) invalidate stale caches. GH Actions cache is immutable
  *  so without this, old entries would persist forever after a kache update. */
-async function buildCacheKey() {
+async function buildCacheKey(workspace = process.cwd()) {
   const prefix = core.getInput("cache-key-prefix") || "kache";
   const platform = `${os.platform()}-${os.arch()}`;
   const kacheVersion = process.env.KACHE_VERSION || "unknown";
 
   // Hash all Cargo.lock files in the workspace
-  const pattern = "**/Cargo.lock";
+  const pattern = path.join(workspace, "**/Cargo.lock");
   const globber = await glob.create(pattern, { followSymbolicLinks: false });
   const lockfiles = await globber.glob();
 
@@ -472,6 +472,7 @@ module.exports = {
   isS3Configured,
   useGitHubCache,
   getCacheDir,
+  buildCacheKey,
   restoreCache,
   saveCache,
   clearEventLog,
