@@ -106,6 +106,8 @@ GitHub Actions cache has a 10 GB limit per repo. For larger projects or shared c
 | `pr-comment` | `true` | Post/update a sticky PR comment with cache stats. The job summary is always written regardless. |
 | `max-size` | `50GiB` (kache default) | Max local kache store size before LRU eviction (e.g. `100GiB`). Maps to `KACHE_MAX_SIZE`. Controls the **local** store, not a remote/S3 cap. |
 
+> **S3-only inputs:** `sync`, `warm`, `manifest-key`, and `min-compile-ms` only take effect with the S3 backend. They tune how the kache daemon *selectively prefetches* expensive artifacts from the remote during setup. The GitHub Actions cache backend has nothing to prefetch — it restores the entire local store in one shot via `@actions/cache` and starts no daemon — so these inputs are ignored when S3 is not configured.
+
 ## How it works
 
 **Setup step** (runs before your build):
