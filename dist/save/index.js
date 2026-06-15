@@ -77983,6 +77983,10 @@ const fs = __nccwpck_require__(79896);
 const os = __nccwpck_require__(70857);
 const path = __nccwpck_require__(16928);
 
+/** Heading text emitted by `kache report --format github`; the JS guard and the
+ *  per-job heading label both key off this literal, so keep them in sync. */
+const REPORT_HEADING = "kache build cache";
+
 /** Map runner OS+arch to Rust target triple */
 function getTarget() {
   const platform = os.platform();
@@ -78330,7 +78334,28 @@ function buildStatsMarkdown(stats, backend, duration) {
   return lines.join("\n");
 }
 
-const COMMENT_MARKER = "<!-- kache-action-comment -->";
+/** Human-readable label identifying this matrix leg: "<job> (<target>)". */
+function jobLabel() {
+  const job = github.context.job || "build";
+  let target;
+  try {
+    target = getTarget();
+  } catch {
+    target = "unknown";
+  }
+  return `${job} (${target})`;
+}
+
+/** Per-job sticky-comment marker so parallel matrix jobs don't clobber each
+ *  other's comment. Keyed by GITHUB_JOB + target triple. Sanitized to stay on
+ *  one line and not break the surrounding HTML comment. */
+function commentMarker() {
+  const key = jobLabel()
+    .replace(/-->/g, "")
+    .replace(/[\r\n]+/g, " ")
+    .trim();
+  return `<!-- kache-action-comment:${key} -->`;
+}
 
 /** Post or update a sticky PR comment with cache stats */
 async function postOrUpdateComment(body, token) {
@@ -78345,7 +78370,8 @@ async function postOrUpdateComment(body, token) {
     return;
   }
 
-  const markedBody = `${COMMENT_MARKER}\n${body}`;
+  const marker = commentMarker();
+  const markedBody = `${marker}\n${body}`;
   const octokit = github.getOctokit(token);
   const repo = context.repo;
 
@@ -78357,7 +78383,7 @@ async function postOrUpdateComment(body, token) {
   });
 
   const existing = comments.find(
-    (c) => c.body && c.body.includes(COMMENT_MARKER)
+    (c) => c.body && c.body.includes(marker)
   );
 
   if (existing) {
@@ -78377,6 +78403,16 @@ async function postOrUpdateComment(body, token) {
   }
 }
 
+/** Append the per-job label to the first "kache build cache" markdown heading,
+ *  so the PR comment is self-identifying regardless of whether the body came
+ *  from `kache report` or the legacy JS fallback. No-op if no such heading. */
+function labelHeading(markdown, label) {
+  // Escape so a future REPORT_HEADING with regex metacharacters stays literal.
+  const heading = REPORT_HEADING.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`^(#{1,6}\\s+${heading})(.*)$`, "im");
+  return markdown.replace(re, `$1 — ${label}$2`);
+}
+
 /** Check if caching is disabled via [no-cache] in the PR description */
 function isNoCacheRequested() {
   const context = github.context;
@@ -78385,6 +78421,7 @@ function isNoCacheRequested() {
 }
 
 module.exports = {
+  REPORT_HEADING,
   getTarget,
   getLatestVersion,
   downloadAndVerify,
@@ -78400,7 +78437,9 @@ module.exports = {
   buildStatsMarkdown,
   postOrUpdateComment,
   isNoCacheRequested,
-  COMMENT_MARKER,
+  jobLabel,
+  commentMarker,
+  labelHeading,
 };
 
 
@@ -120398,12 +120437,14 @@ module.exports = /*#__PURE__*/JSON.parse('{"name":"@actions/cache","version":"5.
 var __webpack_exports__ = {};
 const core = __nccwpck_require__(37484);
 const {
+  REPORT_HEADING,
   runKache,
   saveCache,
   parseEvents,
   buildStatsMarkdown,
   postOrUpdateComment,
-  COMMENT_MARKER,
+  jobLabel,
+  labelHeading,
 } = __nccwpck_require__(95804);
 
 async function run() {
@@ -120437,7 +120478,7 @@ async function run() {
     let reportMarkdown = null;
     try {
       const md = await runKache(["report", "--format", "github", "--since", "24h"]);
-      if (md && md.trim() && md.includes("kache build cache")) {
+      if (md && md.trim() && md.includes(REPORT_HEADING)) {
         reportMarkdown = md.trim();
       }
     } catch {
@@ -120473,8 +120514,24 @@ async function run() {
       }
     }
 
-    // Post/update sticky PR comment
+    // Label the heading with this job so matrix jobs are visually distinguishable
     if (commentBody) {
+      commentBody = labelHeading(commentBody, jobLabel());
+    }
+
+    // Post/update sticky PR comment (opt-out via pr-comment: false).
+    // getBooleanInput is case-insensitive and rejects typos; on an invalid
+    // value we warn and default to enabled rather than throwing (which would
+    // skip the always-on job summary below).
+    let prCommentEnabled = true;
+    try {
+      prCommentEnabled = core.getBooleanInput("pr-comment");
+    } catch {
+      core.warning(
+        "Invalid pr-comment value (expected true/false) — defaulting to true"
+      );
+    }
+    if (prCommentEnabled && commentBody) {
       const token = core.getInput("token");
       try {
         await postOrUpdateComment(commentBody, token);
@@ -120487,6 +120544,9 @@ async function run() {
           core.warning(`Failed to post PR comment: ${err.message}`);
         }
       }
+    } else if (!prCommentEnabled) {
+      // only log the explicit opt-out; "enabled but no body" stays silent
+      core.info("PR comment disabled (pr-comment: false)");
     }
 
     // Write job summary (always, even outside PRs).

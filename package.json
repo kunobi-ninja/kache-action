@@ -5,7 +5,9 @@
   "license": "Apache-2.0",
   "description": "GitHub Action for kache - content-addressed Rust build cache",
   "scripts": {
-    "bundle": "ncc build src/setup.js -o dist/setup && ncc build src/save.js -o dist/save"
+    "bundle": "ncc build src/setup.js -o dist/setup && ncc build src/save.js -o dist/save",
+    "test": "node --test",
+    "check": "node --check src/setup.js && node --check src/save.js && node --check src/utils.js"
   },
   "dependencies": {
     "@actions/cache": "^5.0.0",

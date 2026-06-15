@@ -58,6 +58,13 @@ inputs:
     description: "GitHub token for releases API and PR comments (needs pull-requests: write for comments)"
     required: false
     default: ${{ github.token }}
+  pr-comment:
+    description: "Post/update a sticky PR comment with cache stats. The job summary is always written regardless."
+    required: false
+    default: "true"
+  max-size:
+    description: 'Max local kache store size before LRU eviction (e.g. "100GiB"). Maps to KACHE_MAX_SIZE; kache defaults to 50GiB. Controls the local store, not a remote/S3 cap.'
+    required: false
 
 runs:
   using: "node24"

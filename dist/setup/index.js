@@ -77983,6 +77983,10 @@ const fs = __nccwpck_require__(79896);
 const os = __nccwpck_require__(70857);
 const path = __nccwpck_require__(16928);
 
+/** Heading text emitted by `kache report --format github`; the JS guard and the
+ *  per-job heading label both key off this literal, so keep them in sync. */
+const REPORT_HEADING = "kache build cache";
+
 /** Map runner OS+arch to Rust target triple */
 function getTarget() {
   const platform = os.platform();
@@ -78330,7 +78334,28 @@ function buildStatsMarkdown(stats, backend, duration) {
   return lines.join("\n");
 }
 
-const COMMENT_MARKER = "<!-- kache-action-comment -->";
+/** Human-readable label identifying this matrix leg: "<job> (<target>)". */
+function jobLabel() {
+  const job = github.context.job || "build";
+  let target;
+  try {
+    target = getTarget();
+  } catch {
+    target = "unknown";
+  }
+  return `${job} (${target})`;
+}
+
+/** Per-job sticky-comment marker so parallel matrix jobs don't clobber each
+ *  other's comment. Keyed by GITHUB_JOB + target triple. Sanitized to stay on
+ *  one line and not break the surrounding HTML comment. */
+function commentMarker() {
+  const key = jobLabel()
+    .replace(/-->/g, "")
+    .replace(/[\r\n]+/g, " ")
+    .trim();
+  return `<!-- kache-action-comment:${key} -->`;
+}
 
 /** Post or update a sticky PR comment with cache stats */
 async function postOrUpdateComment(body, token) {
@@ -78345,7 +78370,8 @@ async function postOrUpdateComment(body, token) {
     return;
   }
 
-  const markedBody = `${COMMENT_MARKER}\n${body}`;
+  const marker = commentMarker();
+  const markedBody = `${marker}\n${body}`;
   const octokit = github.getOctokit(token);
   const repo = context.repo;
 
@@ -78357,7 +78383,7 @@ async function postOrUpdateComment(body, token) {
   });
 
   const existing = comments.find(
-    (c) => c.body && c.body.includes(COMMENT_MARKER)
+    (c) => c.body && c.body.includes(marker)
   );
 
   if (existing) {
@@ -78377,6 +78403,16 @@ async function postOrUpdateComment(body, token) {
   }
 }
 
+/** Append the per-job label to the first "kache build cache" markdown heading,
+ *  so the PR comment is self-identifying regardless of whether the body came
+ *  from `kache report` or the legacy JS fallback. No-op if no such heading. */
+function labelHeading(markdown, label) {
+  // Escape so a future REPORT_HEADING with regex metacharacters stays literal.
+  const heading = REPORT_HEADING.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`^(#{1,6}\\s+${heading})(.*)$`, "im");
+  return markdown.replace(re, `$1 — ${label}$2`);
+}
+
 /** Check if caching is disabled via [no-cache] in the PR description */
 function isNoCacheRequested() {
   const context = github.context;
@@ -78385,6 +78421,7 @@ function isNoCacheRequested() {
 }
 
 module.exports = {
+  REPORT_HEADING,
   getTarget,
   getLatestVersion,
   downloadAndVerify,
@@ -78400,7 +78437,9 @@ module.exports = {
   buildStatsMarkdown,
   postOrUpdateComment,
   isNoCacheRequested,
-  COMMENT_MARKER,
+  jobLabel,
+  commentMarker,
+  labelHeading,
 };
 
 
@@ -120497,6 +120536,13 @@ async function run() {
     // Cache executables option
     if (core.getInput("cache-executables") === "true") {
       core.exportVariable("KACHE_CACHE_EXECUTABLES", "1");
+    }
+
+    // Max local store size before LRU eviction (applies regardless of backend)
+    const maxSize = core.getInput("max-size");
+    if (maxSize) {
+      core.exportVariable("KACHE_MAX_SIZE", maxSize);
+      core.info(`KACHE_MAX_SIZE=${maxSize}`);
     }
 
     // Restore cache: S3 (daemon auto-prefetches from manifest), sync (legacy), or GitHub Actions cache

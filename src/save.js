@@ -1,11 +1,13 @@
 const core = require("@actions/core");
 const {
+  REPORT_HEADING,
   runKache,
   saveCache,
   parseEvents,
   buildStatsMarkdown,
   postOrUpdateComment,
-  COMMENT_MARKER,
+  jobLabel,
+  labelHeading,
 } = require("./utils");
 
 async function run() {
@@ -39,7 +41,7 @@ async function run() {
     let reportMarkdown = null;
     try {
       const md = await runKache(["report", "--format", "github", "--since", "24h"]);
-      if (md && md.trim() && md.includes("kache build cache")) {
+      if (md && md.trim() && md.includes(REPORT_HEADING)) {
         reportMarkdown = md.trim();
       }
     } catch {
@@ -75,8 +77,24 @@ async function run() {
       }
     }
 
-    // Post/update sticky PR comment
+    // Label the heading with this job so matrix jobs are visually distinguishable
     if (commentBody) {
+      commentBody = labelHeading(commentBody, jobLabel());
+    }
+
+    // Post/update sticky PR comment (opt-out via pr-comment: false).
+    // getBooleanInput is case-insensitive and rejects typos; on an invalid
+    // value we warn and default to enabled rather than throwing (which would
+    // skip the always-on job summary below).
+    let prCommentEnabled = true;
+    try {
+      prCommentEnabled = core.getBooleanInput("pr-comment");
+    } catch {
+      core.warning(
+        "Invalid pr-comment value (expected true/false) — defaulting to true"
+      );
+    }
+    if (prCommentEnabled && commentBody) {
       const token = core.getInput("token");
       try {
         await postOrUpdateComment(commentBody, token);
@@ -89,6 +107,9 @@ async function run() {
           core.warning(`Failed to post PR comment: ${err.message}`);
         }
       }
+    } else if (!prCommentEnabled) {
+      // only log the explicit opt-out; "enabled but no body" stays silent
+      core.info("PR comment disabled (pr-comment: false)");
     }
 
     // Write job summary (always, even outside PRs).
