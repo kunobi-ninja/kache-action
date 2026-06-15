@@ -6,6 +6,7 @@ const {
   buildStatsMarkdown,
   postOrUpdateComment,
   jobLabel,
+  labelHeading,
 } = require("./utils");
 
 async function run() {
@@ -62,7 +63,7 @@ async function run() {
       const stats = parseEvents();
       if (stats && stats.total > 0) {
         const lines = [];
-        lines.push(`### kache build cache — ${jobLabel()}`);
+        lines.push("### kache build cache");
         lines.push("");
         lines.push(
           `**${stats.hitRate}%** hit rate \u2014 ${stats.hits}/${stats.total} crates from cache, ${stats.misses} compiled`
@@ -73,6 +74,11 @@ async function run() {
         lines.push("*Posted by [kache-action](https://github.com/kunobi-ninja/kache-action)*");
         commentBody = lines.join("\n");
       }
+    }
+
+    // Label the heading with this job so matrix jobs are visually distinguishable
+    if (commentBody) {
+      commentBody = labelHeading(commentBody, jobLabel());
     }
 
     // Post/update sticky PR comment (opt-out via pr-comment: false)

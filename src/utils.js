@@ -421,6 +421,16 @@ async function postOrUpdateComment(body, token) {
   }
 }
 
+/** Append the per-job label to the first "kache build cache" markdown heading,
+ *  so the PR comment is self-identifying regardless of whether the body came
+ *  from `kache report` or the legacy JS fallback. No-op if no such heading. */
+function labelHeading(markdown, label) {
+  return markdown.replace(
+    /^(#{1,6}\s+kache build cache)(.*)$/im,
+    `$1 — ${label}$2`
+  );
+}
+
 /** Check if caching is disabled via [no-cache] in the PR description */
 function isNoCacheRequested() {
   const context = github.context;
@@ -446,4 +456,5 @@ module.exports = {
   isNoCacheRequested,
   jobLabel,
   commentMarker,
+  labelHeading,
 };

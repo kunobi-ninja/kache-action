@@ -78393,6 +78393,16 @@ async function postOrUpdateComment(body, token) {
   }
 }
 
+/** Append the per-job label to the first "kache build cache" markdown heading,
+ *  so the PR comment is self-identifying regardless of whether the body came
+ *  from `kache report` or the legacy JS fallback. No-op if no such heading. */
+function labelHeading(markdown, label) {
+  return markdown.replace(
+    /^(#{1,6}\s+kache build cache)(.*)$/im,
+    `$1 — ${label}$2`
+  );
+}
+
 /** Check if caching is disabled via [no-cache] in the PR description */
 function isNoCacheRequested() {
   const context = github.context;
@@ -78418,6 +78428,7 @@ module.exports = {
   isNoCacheRequested,
   jobLabel,
   commentMarker,
+  labelHeading,
 };
 
 
@@ -120421,6 +120432,7 @@ const {
   buildStatsMarkdown,
   postOrUpdateComment,
   jobLabel,
+  labelHeading,
 } = __nccwpck_require__(95804);
 
 async function run() {
@@ -120477,7 +120489,7 @@ async function run() {
       const stats = parseEvents();
       if (stats && stats.total > 0) {
         const lines = [];
-        lines.push(`### kache build cache — ${jobLabel()}`);
+        lines.push("### kache build cache");
         lines.push("");
         lines.push(
           `**${stats.hitRate}%** hit rate \u2014 ${stats.hits}/${stats.total} crates from cache, ${stats.misses} compiled`
@@ -120488,6 +120500,11 @@ async function run() {
         lines.push("*Posted by [kache-action](https://github.com/kunobi-ninja/kache-action)*");
         commentBody = lines.join("\n");
       }
+    }
+
+    // Label the heading with this job so matrix jobs are visually distinguishable
+    if (commentBody) {
+      commentBody = labelHeading(commentBody, jobLabel());
     }
 
     // Post/update sticky PR comment (opt-out via pr-comment: false)
