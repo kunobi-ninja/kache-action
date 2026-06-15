@@ -36,8 +36,7 @@ function getTarget() {
 /** Fetch latest release tag from kunobi-ninja/kache that has binary assets.
  *  Skips releases where binaries haven't been uploaded yet (e.g. a tag was
  *  just pushed and the release build is still in progress). */
-async function getLatestVersion(token) {
-  const octokit = github.getOctokit(token);
+async function getLatestVersion(token, octokit = github.getOctokit(token)) {
   try {
     const { data: releases } = await octokit.rest.repos.listReleases({
       owner: "kunobi-ninja",
