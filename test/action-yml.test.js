@@ -1,0 +1,55 @@
+// Integration guard: every getInput()/getBooleanInput() string literal in src/
+// must correspond to an input declared in action.yml. Catches a typo'd input
+// name that would silently resolve to "" at runtime.
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const ROOT = path.join(__dirname, "..");
+
+function declaredInputs() {
+  const yml = fs.readFileSync(path.join(ROOT, "action.yml"), "utf8");
+  const start = yml.indexOf("\ninputs:");
+  const end = yml.indexOf("\nruns:");
+  const block = yml.slice(start, end === -1 ? undefined : end);
+  // Top-level input keys are exactly two-space indented "name:" lines.
+  return new Set([...block.matchAll(/^ {2}([a-z0-9-]+):\s*$/gm)].map((m) => m[1]));
+}
+
+function usedInputLiterals() {
+  const srcDir = path.join(ROOT, "src");
+  const used = new Map(); // name -> file it appears in
+  for (const file of fs.readdirSync(srcDir)) {
+    if (!file.endsWith(".js") || file.endsWith(".test.js")) continue;
+    const text = fs.readFileSync(path.join(srcDir, file), "utf8");
+    for (const m of text.matchAll(
+      /\bget(?:Boolean)?Input\(\s*["']([^"']+)["']/g
+    )) {
+      used.set(m[1], file);
+    }
+  }
+  return used;
+}
+
+test("action.yml + src parsing find something (guards against a vacuous test)", () => {
+  const declared = declaredInputs();
+  const used = usedInputLiterals();
+  assert.ok(declared.size >= 10, `expected many declared inputs, got ${declared.size}`);
+  assert.ok(used.size >= 5, `expected several used inputs, got ${used.size}`);
+  // The detection logic must report an unknown name as undeclared.
+  assert.equal(declared.has("totally-bogus-input"), false);
+});
+
+test("every getInput literal in src is declared in action.yml", () => {
+  const declared = declaredInputs();
+  const used = usedInputLiterals();
+  const undeclared = [...used.entries()].filter(([name]) => !declared.has(name));
+  assert.deepEqual(
+    undeclared,
+    [],
+    `getInput() references not declared in action.yml: ${undeclared
+      .map(([n, f]) => `"${n}" (${f})`)
+      .join(", ")}`
+  );
+});
