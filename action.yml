@@ -58,6 +58,10 @@ inputs:
     description: "GitHub token for releases API and PR comments (needs pull-requests: write for comments)"
     required: false
     default: ${{ github.token }}
+  pr-comment:
+    description: "Post/update a sticky PR comment with cache stats. The job summary is always written regardless."
+    required: false
+    default: "true"
 
 runs:
   using: "node24"

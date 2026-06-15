@@ -78330,7 +78330,22 @@ function buildStatsMarkdown(stats, backend, duration) {
   return lines.join("\n");
 }
 
-const COMMENT_MARKER = "<!-- kache-action-comment -->";
+/** Human-readable label identifying this matrix leg: "<job> (<target>)". */
+function jobLabel() {
+  const job = github.context.job || "build";
+  return `${job} (${getTarget()})`;
+}
+
+/** Per-job sticky-comment marker so parallel matrix jobs don't clobber each
+ *  other's comment. Keyed by GITHUB_JOB + target triple. Sanitized to stay on
+ *  one line and not break the surrounding HTML comment. */
+function commentMarker() {
+  const key = jobLabel()
+    .replace(/-->/g, "")
+    .replace(/[\r\n]+/g, " ")
+    .trim();
+  return `<!-- kache-action-comment:${key} -->`;
+}
 
 /** Post or update a sticky PR comment with cache stats */
 async function postOrUpdateComment(body, token) {
@@ -78345,7 +78360,8 @@ async function postOrUpdateComment(body, token) {
     return;
   }
 
-  const markedBody = `${COMMENT_MARKER}\n${body}`;
+  const marker = commentMarker();
+  const markedBody = `${marker}\n${body}`;
   const octokit = github.getOctokit(token);
   const repo = context.repo;
 
@@ -78357,7 +78373,7 @@ async function postOrUpdateComment(body, token) {
   });
 
   const existing = comments.find(
-    (c) => c.body && c.body.includes(COMMENT_MARKER)
+    (c) => c.body && c.body.includes(marker)
   );
 
   if (existing) {
@@ -78400,7 +78416,8 @@ module.exports = {
   buildStatsMarkdown,
   postOrUpdateComment,
   isNoCacheRequested,
-  COMMENT_MARKER,
+  jobLabel,
+  commentMarker,
 };
 
 
@@ -120403,7 +120420,7 @@ const {
   parseEvents,
   buildStatsMarkdown,
   postOrUpdateComment,
-  COMMENT_MARKER,
+  jobLabel,
 } = __nccwpck_require__(95804);
 
 async function run() {
@@ -120460,7 +120477,7 @@ async function run() {
       const stats = parseEvents();
       if (stats && stats.total > 0) {
         const lines = [];
-        lines.push("### kache build cache");
+        lines.push(`### kache build cache — ${jobLabel()}`);
         lines.push("");
         lines.push(
           `**${stats.hitRate}%** hit rate \u2014 ${stats.hits}/${stats.total} crates from cache, ${stats.misses} compiled`
@@ -120473,8 +120490,9 @@ async function run() {
       }
     }
 
-    // Post/update sticky PR comment
-    if (commentBody) {
+    // Post/update sticky PR comment (opt-out via pr-comment: false)
+    const prCommentEnabled = core.getInput("pr-comment") !== "false";
+    if (prCommentEnabled && commentBody) {
       const token = core.getInput("token");
       try {
         await postOrUpdateComment(commentBody, token);
@@ -120487,6 +120505,8 @@ async function run() {
           core.warning(`Failed to post PR comment: ${err.message}`);
         }
       }
+    } else if (!prCommentEnabled) {
+      core.info("PR comment disabled (pr-comment: false)");
     }
 
     // Write job summary (always, even outside PRs).

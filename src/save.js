@@ -5,7 +5,7 @@ const {
   parseEvents,
   buildStatsMarkdown,
   postOrUpdateComment,
-  COMMENT_MARKER,
+  jobLabel,
 } = require("./utils");
 
 async function run() {
@@ -62,7 +62,7 @@ async function run() {
       const stats = parseEvents();
       if (stats && stats.total > 0) {
         const lines = [];
-        lines.push("### kache build cache");
+        lines.push(`### kache build cache — ${jobLabel()}`);
         lines.push("");
         lines.push(
           `**${stats.hitRate}%** hit rate \u2014 ${stats.hits}/${stats.total} crates from cache, ${stats.misses} compiled`
@@ -75,8 +75,9 @@ async function run() {
       }
     }
 
-    // Post/update sticky PR comment
-    if (commentBody) {
+    // Post/update sticky PR comment (opt-out via pr-comment: false)
+    const prCommentEnabled = core.getInput("pr-comment") !== "false";
+    if (prCommentEnabled && commentBody) {
       const token = core.getInput("token");
       try {
         await postOrUpdateComment(commentBody, token);
@@ -89,6 +90,8 @@ async function run() {
           core.warning(`Failed to post PR comment: ${err.message}`);
         }
       }
+    } else if (!prCommentEnabled) {
+      core.info("PR comment disabled (pr-comment: false)");
     }
 
     // Write job summary (always, even outside PRs).
