@@ -171,8 +171,9 @@ async function buildCacheKey(workspace = process.cwd()) {
   const platform = `${os.platform()}-${os.arch()}`;
   const kacheVersion = process.env.KACHE_VERSION || "unknown";
 
-  // Hash all Cargo.lock files in the workspace
-  const pattern = path.join(workspace, "**/Cargo.lock");
+  // Hash all Cargo.lock files in the workspace. @actions/glob expects
+  // forward-slash patterns, so normalize Windows backslashes.
+  const pattern = `${workspace}/**/Cargo.lock`.replace(/\\/g, "/");
   const globber = await glob.create(pattern, { followSymbolicLinks: false });
   const lockfiles = await globber.glob();
 
