@@ -1,8 +1,10 @@
 const core = require("@actions/core");
 const tc = require("@actions/tool-cache");
 const path = require("path");
+const os = require("os");
 const {
   getTarget,
+  binaryName,
   getLatestVersion,
   downloadAndVerify,
   runKache,
@@ -45,14 +47,18 @@ async function run() {
     let toolDir = tc.find(toolName, semver);
 
     if (!toolDir) {
-      let tarPath;
+      let archivePath;
       try {
-        tarPath = await downloadAndVerify(version, target);
+        archivePath = await downloadAndVerify(version, target);
       } catch (err) {
         core.warning(`Failed to download kache ${version} — skipping cache setup (binary not yet available): ${err.message}`);
         return;
       }
-      const extracted = await tc.extractTar(tarPath);
+      // Windows releases ship as .zip, every other platform as .tar.gz.
+      const extracted =
+        os.platform() === "win32"
+          ? await tc.extractZip(archivePath)
+          : await tc.extractTar(archivePath);
       toolDir = await tc.cacheDir(extracted, toolName, semver);
     } else {
       core.info(`Found cached kache ${semver}`);
@@ -61,8 +67,8 @@ async function run() {
     // Add to PATH
     core.addPath(toolDir);
 
-    // Set RUSTC_WRAPPER
-    const kacheBin = path.join(toolDir, "kache");
+    // Set RUSTC_WRAPPER (kache.exe on Windows)
+    const kacheBin = path.join(toolDir, binaryName(os.platform()));
     core.exportVariable("RUSTC_WRAPPER", kacheBin);
     core.info(`RUSTC_WRAPPER=${kacheBin}`);
 

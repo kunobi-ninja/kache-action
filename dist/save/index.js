@@ -77996,6 +77996,8 @@ function getTargetFor(platform, arch) {
     return "aarch64-unknown-linux-musl";
   if (platform === "darwin" && arch === "x64") return "x86_64-apple-darwin";
   if (platform === "darwin" && arch === "arm64") return "aarch64-apple-darwin";
+  if (platform === "win32" && arch === "x64") return "x86_64-pc-windows-msvc";
+  if (platform === "win32" && arch === "arm64") return "aarch64-pc-windows-msvc";
 
   throw new Error(`Unsupported platform: ${platform}-${arch}`);
 }
@@ -78003,6 +78005,11 @@ function getTargetFor(platform, arch) {
 /** Map the runner's OS+arch to a Rust target triple. */
 function getTarget() {
   return getTargetFor(os.platform(), os.arch());
+}
+
+/** The kache executable filename for a platform (`.exe` on Windows). */
+function binaryName(platform) {
+  return platform === "win32" ? "kache.exe" : "kache";
 }
 
 /** Fetch latest release tag from kunobi-ninja/kache that has binary assets.
@@ -78042,27 +78049,34 @@ function verifyChecksum(buffer, shaFileContents, name) {
   return actualHash;
 }
 
-/** Download binary tarball and verify SHA256 checksum */
+/** Release-asset filename for a target. Windows builds ship as `.zip`, every
+ *  other platform as `.tar.gz`. Pure — unit-testable. */
+function assetName(target) {
+  const ext = target.includes("windows") ? "zip" : "tar.gz";
+  return `kache-${target}.${ext}`;
+}
+
+/** Download binary archive (tarball or zip) and verify SHA256 checksum */
 async function downloadAndVerify(version, target) {
   const base = `https://github.com/kunobi-ninja/kache/releases/download/${version}`;
-  const tarName = `kache-${target}.tar.gz`;
-  const tarUrl = `${base}/${tarName}`;
-  const shaUrl = `${base}/${tarName}.sha256`;
+  const archiveName = assetName(target);
+  const archiveUrl = `${base}/${archiveName}`;
+  const shaUrl = `${archiveUrl}.sha256`;
 
-  core.info(`Downloading ${tarUrl}`);
-  const tarPath = await tc.downloadTool(tarUrl);
+  core.info(`Downloading ${archiveUrl}`);
+  const archivePath = await tc.downloadTool(archiveUrl);
 
   core.info(`Downloading checksum ${shaUrl}`);
   const shaPath = await tc.downloadTool(shaUrl);
 
   verifyChecksum(
-    fs.readFileSync(tarPath),
+    fs.readFileSync(archivePath),
     fs.readFileSync(shaPath, "utf8"),
-    tarName
+    archiveName
   );
   core.info("Checksum verified");
 
-  return tarPath;
+  return archivePath;
 }
 
 /** Run a kache CLI command, returning stdout.
@@ -78098,14 +78112,26 @@ function useGitHubCache() {
   return !isS3Configured() && core.getInput("github-cache") === "true";
 }
 
+/** Resolve the kache cache dir for an explicit platform/env/home. Mirrors
+ *  kache's `dirs::cache_dir().join("kache")`. Pure — unit-testable per platform.
+ *  - macOS: ~/Library/Caches/kache
+ *  - Windows: %LOCALAPPDATA%\kache (fallback ~/AppData/Local)
+ *  - Linux/other: ~/.cache/kache */
+function getCacheDirFor(platform, env, home) {
+  if (env.KACHE_CACHE_DIR) return env.KACHE_CACHE_DIR;
+  if (platform === "darwin")
+    return path.join(home, "Library", "Caches", "kache");
+  if (platform === "win32")
+    return path.join(
+      env.LOCALAPPDATA || path.join(home, "AppData", "Local"),
+      "kache"
+    );
+  return path.join(home, ".cache", "kache");
+}
+
 /** Get the kache local cache directory (matches kache's default_cache_dir) */
 function getCacheDir() {
-  if (process.env.KACHE_CACHE_DIR) return process.env.KACHE_CACHE_DIR;
-  // Linux: ~/.cache/kache, macOS: ~/Library/Caches/kache
-  const platform = os.platform();
-  const home = os.homedir();
-  if (platform === "darwin") return path.join(home, "Library", "Caches", "kache");
-  return path.join(home, ".cache", "kache");
+  return getCacheDirFor(os.platform(), process.env, os.homedir());
 }
 
 /** Build a GitHub Actions cache key from Cargo.lock files and kache version.
@@ -78437,6 +78463,8 @@ module.exports = {
   REPORT_HEADING,
   getTarget,
   getTargetFor,
+  binaryName,
+  assetName,
   verifyChecksum,
   getLatestVersion,
   downloadAndVerify,
@@ -78444,6 +78472,7 @@ module.exports = {
   isS3Configured,
   useGitHubCache,
   getCacheDir,
+  getCacheDirFor,
   buildCacheKey,
   restoreCache,
   saveCache,
