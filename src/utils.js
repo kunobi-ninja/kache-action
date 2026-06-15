@@ -15,11 +15,9 @@ const path = require("path");
  *  per-job heading label both key off this literal, so keep them in sync. */
 const REPORT_HEADING = "kache build cache";
 
-/** Map runner OS+arch to Rust target triple */
-function getTarget() {
-  const platform = os.platform();
-  const arch = os.arch();
-
+/** Map an explicit OS+arch to a Rust target triple. Pure — no `os` access — so
+ *  it is unit-testable for every platform, not just the host's. */
+function getTargetFor(platform, arch) {
   if (platform === "linux" && arch === "x64")
     return "x86_64-unknown-linux-musl";
   if (platform === "linux" && arch === "arm64")
@@ -28,6 +26,11 @@ function getTarget() {
   if (platform === "darwin" && arch === "arm64") return "aarch64-apple-darwin";
 
   throw new Error(`Unsupported platform: ${platform}-${arch}`);
+}
+
+/** Map the runner's OS+arch to a Rust target triple. */
+function getTarget() {
+  return getTargetFor(os.platform(), os.arch());
 }
 
 /** Fetch latest release tag from kunobi-ninja/kache that has binary assets.
@@ -451,6 +454,7 @@ function isNoCacheRequested() {
 module.exports = {
   REPORT_HEADING,
   getTarget,
+  getTargetFor,
   getLatestVersion,
   downloadAndVerify,
   runKache,
