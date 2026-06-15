@@ -78208,8 +78208,14 @@ function clearTransferLog() {
 function parseEvents() {
   const logPath = getEventLogPath();
   if (!fs.existsSync(logPath)) return null;
+  return parseEventsFrom(fs.readFileSync(logPath, "utf8"));
+}
 
-  const content = fs.readFileSync(logPath, "utf8").trim();
+/** Aggregate run stats from raw events.jsonl content. Pure — no fs — so the
+ *  hit-rate math, miss sorting and malformed-line handling are unit-testable.
+ *  Returns null when there are no parseable events. */
+function parseEventsFrom(rawContent) {
+  const content = rawContent.trim();
   if (!content) return null;
 
   const events = [];
@@ -78444,6 +78450,7 @@ module.exports = {
   clearEventLog,
   clearTransferLog,
   parseEvents,
+  parseEventsFrom,
   buildStatsMarkdown,
   postOrUpdateComment,
   isNoCacheRequested,
