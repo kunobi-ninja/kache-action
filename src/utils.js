@@ -435,7 +435,9 @@ async function postOrUpdateComment(body, token) {
  *  so the PR comment is self-identifying regardless of whether the body came
  *  from `kache report` or the legacy JS fallback. No-op if no such heading. */
 function labelHeading(markdown, label) {
-  const re = new RegExp(`^(#{1,6}\\s+${REPORT_HEADING})(.*)$`, "im");
+  // Escape so a future REPORT_HEADING with regex metacharacters stays literal.
+  const heading = REPORT_HEADING.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`^(#{1,6}\\s+${heading})(.*)$`, "im");
   return markdown.replace(re, `$1 — ${label}$2`);
 }
 
