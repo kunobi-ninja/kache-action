@@ -120536,6 +120536,13 @@ async function run() {
       core.exportVariable("KACHE_CACHE_EXECUTABLES", "1");
     }
 
+    // Max local store size before LRU eviction (applies regardless of backend)
+    const maxSize = core.getInput("max-size");
+    if (maxSize) {
+      core.exportVariable("KACHE_MAX_SIZE", maxSize);
+      core.info(`KACHE_MAX_SIZE=${maxSize}`);
+    }
+
     // Restore cache: S3 (daemon auto-prefetches from manifest), sync (legacy), or GitHub Actions cache
     const s3 = isS3Configured();
     const ghCache = useGitHubCache();
