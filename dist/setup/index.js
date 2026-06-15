@@ -77987,11 +77987,9 @@ const path = __nccwpck_require__(16928);
  *  per-job heading label both key off this literal, so keep them in sync. */
 const REPORT_HEADING = "kache build cache";
 
-/** Map runner OS+arch to Rust target triple */
-function getTarget() {
-  const platform = os.platform();
-  const arch = os.arch();
-
+/** Map an explicit OS+arch to a Rust target triple. Pure — no `os` access — so
+ *  it is unit-testable for every platform, not just the host's. */
+function getTargetFor(platform, arch) {
   if (platform === "linux" && arch === "x64")
     return "x86_64-unknown-linux-musl";
   if (platform === "linux" && arch === "arm64")
@@ -78002,11 +78000,15 @@ function getTarget() {
   throw new Error(`Unsupported platform: ${platform}-${arch}`);
 }
 
+/** Map the runner's OS+arch to a Rust target triple. */
+function getTarget() {
+  return getTargetFor(os.platform(), os.arch());
+}
+
 /** Fetch latest release tag from kunobi-ninja/kache that has binary assets.
  *  Skips releases where binaries haven't been uploaded yet (e.g. a tag was
  *  just pushed and the release build is still in progress). */
-async function getLatestVersion(token) {
-  const octokit = github.getOctokit(token);
+async function getLatestVersion(token, octokit = github.getOctokit(token)) {
   try {
     const { data: releases } = await octokit.rest.repos.listReleases({
       owner: "kunobi-ninja",
@@ -78026,6 +78028,20 @@ async function getLatestVersion(token) {
   }
 }
 
+/** Verify a buffer's SHA256 against a `.sha256` file's contents (format:
+ *  "<hash>  <filename>"). Pure — no fs/network — so the supply-chain integrity
+ *  check is unit-testable. Returns the verified hash; throws on mismatch. */
+function verifyChecksum(buffer, shaFileContents, name) {
+  const expectedHash = shaFileContents.trim().split(/\s+/)[0];
+  const actualHash = crypto.createHash("sha256").update(buffer).digest("hex");
+  if (actualHash !== expectedHash) {
+    throw new Error(
+      `SHA256 mismatch for ${name}: expected ${expectedHash}, got ${actualHash}`
+    );
+  }
+  return actualHash;
+}
+
 /** Download binary tarball and verify SHA256 checksum */
 async function downloadAndVerify(version, target) {
   const base = `https://github.com/kunobi-ninja/kache/releases/download/${version}`;
@@ -78039,20 +78055,11 @@ async function downloadAndVerify(version, target) {
   core.info(`Downloading checksum ${shaUrl}`);
   const shaPath = await tc.downloadTool(shaUrl);
 
-  // Verify SHA256
-  const expectedLine = fs.readFileSync(shaPath, "utf8").trim();
-  const expectedHash = expectedLine.split(/\s+/)[0];
-  const fileBuffer = fs.readFileSync(tarPath);
-  const actualHash = crypto
-    .createHash("sha256")
-    .update(fileBuffer)
-    .digest("hex");
-
-  if (actualHash !== expectedHash) {
-    throw new Error(
-      `SHA256 mismatch for ${tarName}: expected ${expectedHash}, got ${actualHash}`
-    );
-  }
+  verifyChecksum(
+    fs.readFileSync(tarPath),
+    fs.readFileSync(shaPath, "utf8"),
+    tarName
+  );
   core.info("Checksum verified");
 
   return tarPath;
@@ -78105,13 +78112,13 @@ function getCacheDir() {
  *  Including the kache version ensures that binary upgrades (which may change
  *  cache key computation) invalidate stale caches. GH Actions cache is immutable
  *  so without this, old entries would persist forever after a kache update. */
-async function buildCacheKey() {
+async function buildCacheKey(workspace = process.cwd()) {
   const prefix = core.getInput("cache-key-prefix") || "kache";
   const platform = `${os.platform()}-${os.arch()}`;
   const kacheVersion = process.env.KACHE_VERSION || "unknown";
 
   // Hash all Cargo.lock files in the workspace
-  const pattern = "**/Cargo.lock";
+  const pattern = path.join(workspace, "**/Cargo.lock");
   const globber = await glob.create(pattern, { followSymbolicLinks: false });
   const lockfiles = await globber.glob();
 
@@ -78200,8 +78207,14 @@ function clearTransferLog() {
 function parseEvents() {
   const logPath = getEventLogPath();
   if (!fs.existsSync(logPath)) return null;
+  return parseEventsFrom(fs.readFileSync(logPath, "utf8"));
+}
 
-  const content = fs.readFileSync(logPath, "utf8").trim();
+/** Aggregate run stats from raw events.jsonl content. Pure — no fs — so the
+ *  hit-rate math, miss sorting and malformed-line handling are unit-testable.
+ *  Returns null when there are no parseable events. */
+function parseEventsFrom(rawContent) {
+  const content = rawContent.trim();
   if (!content) return null;
 
   const events = [];
@@ -78423,17 +78436,23 @@ function isNoCacheRequested() {
 module.exports = {
   REPORT_HEADING,
   getTarget,
+  getTargetFor,
+  verifyChecksum,
   getLatestVersion,
   downloadAndVerify,
   runKache,
   isS3Configured,
   useGitHubCache,
   getCacheDir,
+  buildCacheKey,
   restoreCache,
   saveCache,
   clearEventLog,
   clearTransferLog,
   parseEvents,
+  parseEventsFrom,
+  formatBytes,
+  formatMs,
   buildStatsMarkdown,
   postOrUpdateComment,
   isNoCacheRequested,
