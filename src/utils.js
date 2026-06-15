@@ -57,6 +57,20 @@ async function getLatestVersion(token) {
   }
 }
 
+/** Verify a buffer's SHA256 against a `.sha256` file's contents (format:
+ *  "<hash>  <filename>"). Pure — no fs/network — so the supply-chain integrity
+ *  check is unit-testable. Returns the verified hash; throws on mismatch. */
+function verifyChecksum(buffer, shaFileContents, name) {
+  const expectedHash = shaFileContents.trim().split(/\s+/)[0];
+  const actualHash = crypto.createHash("sha256").update(buffer).digest("hex");
+  if (actualHash !== expectedHash) {
+    throw new Error(
+      `SHA256 mismatch for ${name}: expected ${expectedHash}, got ${actualHash}`
+    );
+  }
+  return actualHash;
+}
+
 /** Download binary tarball and verify SHA256 checksum */
 async function downloadAndVerify(version, target) {
   const base = `https://github.com/kunobi-ninja/kache/releases/download/${version}`;
@@ -70,20 +84,11 @@ async function downloadAndVerify(version, target) {
   core.info(`Downloading checksum ${shaUrl}`);
   const shaPath = await tc.downloadTool(shaUrl);
 
-  // Verify SHA256
-  const expectedLine = fs.readFileSync(shaPath, "utf8").trim();
-  const expectedHash = expectedLine.split(/\s+/)[0];
-  const fileBuffer = fs.readFileSync(tarPath);
-  const actualHash = crypto
-    .createHash("sha256")
-    .update(fileBuffer)
-    .digest("hex");
-
-  if (actualHash !== expectedHash) {
-    throw new Error(
-      `SHA256 mismatch for ${tarName}: expected ${expectedHash}, got ${actualHash}`
-    );
-  }
+  verifyChecksum(
+    fs.readFileSync(tarPath),
+    fs.readFileSync(shaPath, "utf8"),
+    tarName
+  );
   core.info("Checksum verified");
 
   return tarPath;
@@ -455,6 +460,7 @@ module.exports = {
   REPORT_HEADING,
   getTarget,
   getTargetFor,
+  verifyChecksum,
   getLatestVersion,
   downloadAndVerify,
   runKache,
