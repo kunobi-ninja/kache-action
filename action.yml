@@ -50,6 +50,10 @@ inputs:
     description: "Manifest key for scoping builds (default: target triple). Use different keys for clippy, test, release builds sharing the same S3 bucket."
     required: false
     default: ""
+  namespace:
+    description: "Shard namespace — enables content-addressed shard upload and sharded prefetch (the path that lets cached-crate downloads overlap compilation). Defaults to manifest-key, so scoping a build with manifest-key turns on shards automatically. Set distinct values per build variant (clippy/test/release) sharing one bucket; leave both empty to disable shards."
+    required: false
+    default: ""
   min-compile-ms:
     description: "Skip prefetching crates that compiled faster than this (ms). Cheaper to recompile."
     required: false
