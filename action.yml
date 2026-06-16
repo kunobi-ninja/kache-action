@@ -51,7 +51,7 @@ inputs:
     required: false
     default: ""
   namespace:
-    description: "Shard namespace — enables content-addressed shard upload and sharded prefetch (the path that lets cached-crate downloads overlap compilation). Defaults to manifest-key, so scoping a build with manifest-key turns on shards automatically. Set distinct values per build variant (clippy/test/release) sharing one bucket; leave both empty to disable shards."
+    description: "Enables content-addressed shards (sharded prefetch + shard upload). Defaults to manifest-key, so scoping a build turns shards on. Helps most when deps churn or for cross-branch sharing; set distinct values per build variant sharing one bucket, or leave both empty to disable shards. See the Manifest vs shards section in the README."
     required: false
     default: ""
   min-compile-ms:
