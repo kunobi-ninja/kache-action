@@ -120513,6 +120513,11 @@ async function run() {
       const saveArgs = ["save-manifest"];
       const manifestKey = core.getInput("manifest-key");
       if (manifestKey) saveArgs.push("--manifest-key", manifestKey);
+      // Pass --namespace explicitly (defaults to manifest-key) so shard upload
+      // works in the post step regardless of whether KACHE_NAMESPACE propagated
+      // here from setup. kache's save-manifest prefers the flag over the env var.
+      const namespace = core.getInput("namespace") || manifestKey;
+      if (namespace) saveArgs.push("--namespace", namespace);
       core.info("Saving build manifest...");
       await runKache(saveArgs);
 

@@ -120627,6 +120627,13 @@ async function run() {
     if (s3) {
       const manifestKey = core.getInput("manifest-key");
       if (manifestKey) core.exportVariable("KACHE_MANIFEST_KEY", manifestKey);
+      // Namespace drives sharded prefetch (kache reads KACHE_NAMESPACE in
+      // build_intent::discover) and shard upload in the post step. Default to the
+      // manifest-key so any consumer already scoping its build gets shards — and
+      // thus prefetch that overlaps downloads with compilation — for free. Export
+      // before the daemon starts below so the daemon inherits it too.
+      const namespace = core.getInput("namespace") || manifestKey;
+      if (namespace) core.exportVariable("KACHE_NAMESPACE", namespace);
       const minMs = core.getInput("min-compile-ms");
       if (minMs && minMs !== "1000") core.exportVariable("KACHE_MIN_COMPILE_MS", minMs);
       const warm = core.getInput("warm") !== "false";

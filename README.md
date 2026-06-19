@@ -101,25 +101,37 @@ GitHub Actions cache has a 10 GB limit per repo. For larger projects or shared c
 | `sync` | `false` | Pull the **entire** remote cache on setup (slow; prefer `warm`). S3 only. |
 | `warm` | `true` | Auto-prefetch expensive artifacts from the build manifest on daemon startup. S3 only. |
 | `manifest-key` | — | Manifest key for scoping builds (default: target triple). Use different keys for clippy/test/release builds that share one S3 bucket. |
+| `namespace` | `manifest-key` | Enables content-addressed **shards** (see [Manifest vs shards](#manifest-vs-shards)) — sharded prefetch + shard upload. Defaults to `manifest-key`, so scoping a build also turns shards on. Leave both empty to disable shards. |
 | `min-compile-ms` | `1000` | Skip prefetching crates that compiled faster than this (ms) — cheaper to recompile. |
 | `token` | `${{ github.token }}` | GitHub token for fetching releases and posting PR comments (needs `pull-requests: write` for comments) |
 | `pr-comment` | `true` | Post/update a sticky PR comment with cache stats. The job summary is always written regardless. |
 | `max-size` | `50GiB` (kache default) | Max local kache store size before LRU eviction (e.g. `100GiB`). Maps to `KACHE_MAX_SIZE`. Controls the **local** store, not a remote/S3 cap. |
 
-> **S3-only inputs:** `sync`, `warm`, `manifest-key`, and `min-compile-ms` only take effect with the S3 backend. They tune how the kache daemon *selectively prefetches* expensive artifacts from the remote during setup. The GitHub Actions cache backend has nothing to prefetch — it restores the entire local store in one shot via `@actions/cache` and starts no daemon — so these inputs are ignored when S3 is not configured.
+> **S3-only inputs:** `sync`, `warm`, `manifest-key`, `namespace`, and `min-compile-ms` only take effect with the S3 backend. They tune how the kache daemon *selectively prefetches* expensive artifacts from the remote during setup. The GitHub Actions cache backend has nothing to prefetch — it restores the entire local store in one shot via `@actions/cache` and starts no daemon — so these inputs are ignored when S3 is not configured.
+
+## Manifest vs shards
+
+Both make the daemon's warm prefetch *selective* (pull the expensive artifacts, skip the cheap ones) instead of syncing the whole remote — but they degrade differently as your build drifts:
+
+- **Build manifest** (`manifest-key`) — a snapshot of *one build's* full key set. The next run with the same key prefetches exactly those artifacts. Ideal when the build is identical run-to-run; as the dependency graph drifts, more of the snapshot goes stale.
+- **Shards** (`namespace`) — content-addressed indexes keyed by *chunks of the dependency graph*. Unchanged chunks keep matching even when other parts of the build change, so prefetch stays effective across partial changes and across branches/PRs whose exact manifests don't line up.
+
+**When to set `namespace`:** you usually don't need to — it defaults to `manifest-key`, so scoping a build enables both. The payoff is largest when your **dependency graph churns** between runs or you want **cross-branch/PR** prefetch sharing. For a build whose deps are stable run-to-run (only your own crates change), the manifest alone already prefetches most of the set, and shards add little. Leaving `manifest-key` and `namespace` both empty disables shards entirely.
+
+> Why scope at all? Without a key, the manifest defaults to the target triple, which **every** build sharing the bucket (clippy/test/release/e2e) writes — so they clobber each other's manifest and prefetch falls back to near-zero. Give each build variant a distinct `manifest-key` and they stop fighting.
 
 ## How it works
 
 **Setup step** (runs before your build):
 1. Downloads the kache binary from [GitHub Releases](https://github.com/kunobi-ninja/kache/releases) and verifies its SHA256 checksum
-2. Sets `RUSTC_WRAPPER=kache` and exports the relevant env vars — S3 credentials, `KACHE_VERSION`, `KACHE_MAX_SIZE`, and (for S3) the manifest/warm config (`KACHE_MANIFEST_KEY`, `KACHE_MIN_COMPILE_MS`)
+2. Sets `RUSTC_WRAPPER=kache` and exports the relevant env vars — S3 credentials, `KACHE_VERSION`, `KACHE_MAX_SIZE`, and (for S3) the manifest/warm config (`KACHE_MANIFEST_KEY`, `KACHE_NAMESPACE`, `KACHE_MIN_COMPILE_MS`)
 3. Restores the cache:
-   - **S3** — starts the kache daemon, which warm-prefetches expensive artifacts from the build manifest. With `sync: true` it instead (or additionally) pulls the entire remote cache up front via `kache sync --pull`.
+   - **S3** — starts the kache daemon, which warm-prefetches expensive artifacts from the build manifest (and from per-dependency shards when `namespace` is set). With `sync: true` it instead (or additionally) pulls the entire remote cache up front via `kache sync --pull`.
    - **GitHub** — restores the local store via `@actions/cache`.
 
 **Post step** (runs after your build, even on failure):
 1. Saves the cache:
-   - **S3** — records the build manifest with `kache save-manifest` (so the next run knows what to warm), then pushes with `kache sync --push`.
+   - **S3** — records the build manifest with `kache save-manifest` (so the next run knows what to warm), uploading per-dependency shards too when `namespace` is set, then pushes with `kache sync --push`.
    - **GitHub** — saves the local store via `@actions/cache`.
 2. Generates the report with `kache report --format github --since 24h` and posts/updates a sticky PR comment from it (hit rate plus a cache-miss breakdown)
 3. Writes that same report as the job summary (always, even outside PRs)
