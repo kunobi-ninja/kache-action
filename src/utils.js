@@ -136,8 +136,27 @@ function isS3Configured() {
 }
 
 /** Check if GitHub Actions cache should be used */
-function useGitHubCache() {
-  return !isS3Configured() && core.getInput("github-cache") === "true";
+function useGitHubCache(nodeCacheEnabled = isNodeCacheEnabled()) {
+  return (
+    !nodeCacheEnabled &&
+    !isS3Configured() &&
+    core.getInput("github-cache") === "true"
+  );
+}
+
+/** A persistent node cache is safe only when runner placement and the mount
+ * enforce a trust boundary. This fork check is defense in depth. */
+function isNodeCacheEnabled() {
+  return core.getInput("node-cache").trim().toLowerCase() === "true";
+}
+
+function isForkPullRequest() {
+  const pullRequest = github.context.payload?.pull_request;
+  if (!pullRequest) return false;
+  if (pullRequest.head?.repo?.fork === true) return true;
+  const head = pullRequest.head?.repo?.full_name;
+  const base = pullRequest.base?.repo?.full_name;
+  return Boolean(head && base && head !== base);
 }
 
 /** Prefix a C/C++ compiler command with kache, without double-wrapping. */
@@ -176,9 +195,94 @@ function getCacheDirFor(platform, env, home) {
 /** Get the kache local cache directory. An action input takes precedence over
  *  KACHE_CACHE_DIR so the selected path can be exported consistently to kache. */
 function getCacheDir() {
+  if (process.env.KACHE_EFFECTIVE_CACHE_DIR) {
+    return process.env.KACHE_EFFECTIVE_CACHE_DIR;
+  }
   const input = core.getInput("cache-dir");
   if (input) return input;
   return getCacheDirFor(os.platform(), process.env, os.homedir());
+}
+
+const NODE_CACHE_MIN_FREE_BYTES = 10 * 1024 * 1024 * 1024;
+
+/** Verify that the persistent node store is writable and has enough headroom
+ * for a representative Rust build. Operational failures fail open to the
+ * ordinary job-local store; trust-policy failures are rejected by setup. */
+function checkNodeCacheStore(cacheDir, fsApi = require("fs")) {
+  const probe = path.join(
+    cacheDir,
+    `.kache-action-probe-${process.pid}-${Date.now()}`
+  );
+  try {
+    fsApi.mkdirSync(cacheDir, { recursive: true });
+    fsApi.writeFileSync(probe, "ok", { flag: "wx", mode: 0o600 });
+    fsApi.unlinkSync(probe);
+
+    if (typeof fsApi.statfsSync === "function") {
+      const stats = fsApi.statfsSync(cacheDir, { bigint: true });
+      const free = stats.bavail * stats.bsize;
+      if (free < BigInt(NODE_CACHE_MIN_FREE_BYTES)) {
+        return {
+          ok: false,
+          reason: `node cache has only ${free} free bytes (requires ${NODE_CACHE_MIN_FREE_BYTES})`,
+        };
+      }
+    }
+    return { ok: true };
+  } catch (error) {
+    try {
+      fsApi.unlinkSync(probe);
+    } catch {
+      // The probe may not have been created.
+    }
+    return { ok: false, reason: error.message || String(error) };
+  }
+}
+
+function nodeCacheFallbackDir() {
+  const runnerTemp = process.env.RUNNER_TEMP;
+  if (!runnerTemp) {
+    throw new Error("node-cache fallback requires RUNNER_TEMP");
+  }
+  return path.join(runnerTemp, "kache-fallback");
+}
+
+/** Resolve job-owned runtime state separately from a persistent cache store. */
+function getRuntimeDir() {
+  const input = core.getInput("runtime-dir");
+  if (input) return input;
+  if (process.env.KACHE_RUNTIME_DIR) return process.env.KACHE_RUNTIME_DIR;
+
+  const runnerTemp = process.env.RUNNER_TEMP;
+  if (!runnerTemp) {
+    if (isNodeCacheEnabled()) {
+      throw new Error("node-cache requires RUNNER_TEMP or an explicit runtime-dir");
+    }
+    return "";
+  }
+  const identity = [
+    process.env.GITHUB_RUN_ID || "run",
+    process.env.GITHUB_RUN_ATTEMPT || "1",
+    process.env.GITHUB_JOB || "job",
+  ]
+    .join("-")
+    .replace(/[^A-Za-z0-9_.-]/g, "_");
+  return path.join(runnerTemp, `kache-runtime-${identity}`);
+}
+
+/** Fail-closed feature probe for Kache releases that understand
+ * KACHE_RUNTIME_DIR. `daemon status` resolves configuration without starting
+ * the daemon and prints the filesystem socket selector on every platform. */
+function daemonStatusUsesRuntimeDir(status, runtimeDir) {
+  if (!status || !runtimeDir) return false;
+  return status.includes(path.join(runtimeDir, "daemon.sock"));
+}
+
+/** v0.15.0 refuses to let a persistent default daemon inherit a remote that
+ * exists only in the current job environment, but predates KACHE_RUNTIME_DIR.
+ * Older releases retain their legacy behaviour; v0.15.1+ supports isolation. */
+function hasUnsafeEnvOnlyDaemonVersion(version) {
+  return /^v?0\.15\.0$/.test((version || "").trim());
 }
 
 /** Build a GitHub Actions cache key from Cargo.lock files and kache version.
@@ -252,7 +356,7 @@ async function saveCache() {
 
 /** Get path to kache's event log */
 function getEventLogPath() {
-  return path.join(getCacheDir(), "events.jsonl");
+  return path.join(getRuntimeDir() || getCacheDir(), "events.jsonl");
 }
 
 /** Clear the event log so we only capture this run's events */
@@ -268,7 +372,7 @@ function clearEventLog() {
 
 /** Clear the transfer log so we only capture this run's transfers */
 function clearTransferLog() {
-  const logPath = path.join(getCacheDir(), "transfers.jsonl");
+  const logPath = path.join(getRuntimeDir() || getCacheDir(), "transfers.jsonl");
   try {
     fs.writeFileSync(logPath, "");
     core.info("Cleared kache transfer log");
@@ -500,6 +604,17 @@ function labelHeading(markdown, label) {
   return markdown.replace(re, `$1 — ${label}$2`);
 }
 
+/** The action clears Kache's event and transfer logs immediately before the
+ * build, so the report rows describe this job even though Kache's generic CLI
+ * labels the maximum lookback as "last 24h". Keep the persistent-store section
+ * as a snapshot, but make the event window truthful for Actions consumers. */
+function labelCurrentJobWindow(markdown) {
+  return markdown.replace(
+    /^(\|\s*Window\s*\|\s*)last 24h(\s*\|)$/m,
+    "$1current job$2"
+  );
+}
+
 /** Check if caching is disabled via [no-cache] in the PR description */
 function isNoCacheRequested() {
   const context = github.context;
@@ -519,10 +634,17 @@ module.exports = {
   runKache,
   isS3Configured,
   useGitHubCache,
+  isNodeCacheEnabled,
+  isForkPullRequest,
   wrapCppCompiler,
   getCppCompilerEnv,
   getCacheDir,
   getCacheDirFor,
+  checkNodeCacheStore,
+  nodeCacheFallbackDir,
+  getRuntimeDir,
+  daemonStatusUsesRuntimeDir,
+  hasUnsafeEnvOnlyDaemonVersion,
   buildCacheKey,
   restoreCache,
   saveCache,
@@ -538,4 +660,5 @@ module.exports = {
   jobLabel,
   commentMarker,
   labelHeading,
+  labelCurrentJobWindow,
 };

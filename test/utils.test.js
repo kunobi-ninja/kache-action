@@ -44,6 +44,23 @@ test("labelHeading only labels the first matching heading (no global flag)", () 
   assert.equal(out.match(/— L/g).length, 1);
 });
 
+test("labelCurrentJobWindow makes the cleared-log report window truthful", () => {
+  const md = [
+    "| | |",
+    "|---|---|",
+    "| Window | last 24h |",
+    "| Crates | 1 cached / 0 compiled |",
+  ].join("\n");
+  const out = utils.labelCurrentJobWindow(md);
+  assert.match(out, /^\| Window \| current job \|$/m);
+  assert.doesNotMatch(out, /last 24h/);
+});
+
+test("labelCurrentJobWindow leaves unrelated markdown unchanged", () => {
+  const md = "| Window | last 7d |";
+  assert.equal(utils.labelCurrentJobWindow(md), md);
+});
+
 test("commentMarker is a single-line HTML comment carrying the job", () => {
   setJob("build");
   const m = utils.commentMarker();

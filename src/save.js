@@ -8,9 +8,11 @@ const {
   postOrUpdateComment,
   jobLabel,
   labelHeading,
+  labelCurrentJobWindow,
 } = require("./utils");
 
 async function run() {
+  const stopDaemon = core.getState("stop-daemon") === "true";
   try {
     // Skip post step if [no-cache] was detected during setup
     if (core.getState("no-cache") === "true") {
@@ -50,7 +52,7 @@ async function run() {
     try {
       const md = await runKache(["report", "--format", "github", "--since", "24h"]);
       if (md && md.trim() && md.includes(REPORT_HEADING)) {
-        reportMarkdown = md.trim();
+        reportMarkdown = labelCurrentJobWindow(md.trim());
       }
     } catch {
       // Older kache without report/github format — fall back to legacy
@@ -147,6 +149,15 @@ async function run() {
   } catch (error) {
     // Post step should not fail the build
     core.warning(`kache post step failed: ${error.message}`);
+  } finally {
+    if (stopDaemon) {
+      try {
+        core.info("Stopping job-scoped kache daemon...");
+        await runKache(["daemon", "stop"]);
+      } catch (error) {
+        core.warning(`Failed to stop job-scoped kache daemon: ${error.message}`);
+      }
+    }
   }
 }
 

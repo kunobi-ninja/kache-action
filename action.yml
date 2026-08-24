@@ -41,6 +41,13 @@ inputs:
   cache-dir:
     description: "Local kache store directory. Set to ${{ runner.temp }}/kache when the cache must share a filesystem with the build workspace."
     required: false
+  node-cache:
+    description: "On Linux ephemeral runners, reuse cache-dir as a trusted node-local store across jobs. Requires an explicit cache-dir mounted only into one trusted runner pool; disables GitHub Actions cache persistence."
+    required: false
+    default: "false"
+  runtime-dir:
+    description: "Job-scoped kache runtime directory for sockets, locks, logs, events, and build-session state. In GitHub Actions this defaults under runner.temp for every job."
+    required: false
   save-cache:
     description: "Save cache changes after the build. Set false for restore-only jobs. With S3, this also disables remote uploads."
     required: false

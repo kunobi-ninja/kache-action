@@ -125,6 +125,28 @@ This is useful on GitHub-hosted Windows runners and ephemeral self-hosted runner
 whose home and workspace directories are on different volumes. Persistent
 self-hosted runners can omit the input to retain a warm cache between jobs.
 
+For trusted Linux ephemeral runners that mount a persistent per-node directory, keep
+the store persistent but move every daemon/socket/log/session file into the job:
+
+```yaml
+- uses: kunobi-ninja/kache-action@v1
+  with:
+    cache-dir: ${{ runner.temp }}/kache
+    node-cache: true
+```
+
+`node-cache` requires an explicit `cache-dir`, derives a unique runtime directory
+under `runner.temp`, and disables GitHub Actions cache persistence. The mounted
+store must exist only on a runner scale set restricted to mutually trusted
+repositories/workflows. The action rejects fork PRs as defense in depth, but an
+`if:` condition is not a security boundary: untrusted pods must never receive the
+mount.
+
+At startup the action verifies that the mounted store is writable, has at least
+10 GiB free, and that the installed Kache release honors the job-scoped runtime.
+An operational failure falls back to `${{ runner.temp }}/kache-fallback` while
+keeping ordinary S3/v3 behavior. Trust-policy violations still fail closed.
+
 ## Inputs
 
 | Input | Default | Description |
@@ -140,6 +162,8 @@ self-hosted runners can omit the input to retain a warm cache between jobs.
 | `cache-c-cpp` | `false` | Wrap `CC`/`CXX` to cache supported C/C++ object compiles. Uses `cc`/`c++` on Unix and `clang-cl` on Windows. |
 | `github-cache` | `true` | Use GitHub Actions cache for the local store when S3 is not configured |
 | `cache-dir` | native kache cache directory | Local kache store directory. Use `${{ runner.temp }}/kache` to colocate it with the runner workspace. |
+| `node-cache` | `false` | Reuse `cache-dir` as a trusted node-local store across ephemeral jobs. Requires a runner mount trust boundary and disables GitHub Actions cache persistence. |
+| `runtime-dir` | job-scoped under `runner.temp` in Actions | Override sockets, locks, logs, events, and build-session state. Every Actions job is isolated, even when `cache-dir` is persistent. |
 | `save-cache` | `true` | Save cache changes after the build. Set to `false` for restore-only jobs; with S3 this also disables remote uploads. |
 | `cache-key-prefix` | `kache` | Prefix for the GitHub Actions cache key |
 | `sync` | `false` | Pull the **entire** remote cache on setup (slow; prefer `warm`). S3 only. |

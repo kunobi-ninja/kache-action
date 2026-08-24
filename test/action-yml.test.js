@@ -78,3 +78,9 @@ test("cache-dir is optional and has no platform-specific default", () => {
   assert.match(definition, /^ {4}required: false$/m);
   assert.doesNotMatch(definition, /^ {4}default:/m);
 });
+
+test("node-cache is explicit and runtime-dir stays optional", () => {
+  assert.match(inputDefinition("node-cache"), /^ {4}default: "false"$/m);
+  assert.match(inputDefinition("runtime-dir"), /^ {4}required: false$/m);
+  assert.doesNotMatch(inputDefinition("runtime-dir"), /^ {4}default:/m);
+});

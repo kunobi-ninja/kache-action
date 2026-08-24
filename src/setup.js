@@ -10,7 +10,14 @@ const {
   runKache,
   isS3Configured,
   useGitHubCache,
+  isNodeCacheEnabled,
+  isForkPullRequest,
   getCacheDir,
+  checkNodeCacheStore,
+  nodeCacheFallbackDir,
+  getRuntimeDir,
+  daemonStatusUsesRuntimeDir,
+  hasUnsafeEnvOnlyDaemonVersion,
   restoreCache,
   clearEventLog,
   clearTransferLog,
@@ -86,9 +93,63 @@ async function run() {
     // Keep kache itself and the action's restore/save paths aligned. This also
     // lets ephemeral runners place the store beside the build tree so reflinks
     // do not cross filesystem boundaries.
-    const cacheDir = getCacheDir();
+    let cacheDir = getCacheDir();
+    let nodeCache = isNodeCacheEnabled();
+    if (nodeCache && !core.getInput("cache-dir") && !process.env.KACHE_CACHE_DIR) {
+      throw new Error(
+        "node-cache requires an explicit cache-dir mounted only into the trusted runner pool"
+      );
+    }
+    if (nodeCache && os.platform() !== "linux") {
+      throw new Error("node-cache currently supports Linux ephemeral runners only");
+    }
+    if (nodeCache && isForkPullRequest()) {
+      throw new Error("node-cache is forbidden for pull requests from forks");
+    }
     core.exportVariable("KACHE_CACHE_DIR", cacheDir);
+    core.exportVariable("KACHE_EFFECTIVE_CACHE_DIR", cacheDir);
     core.info(`KACHE_CACHE_DIR=${cacheDir}`);
+    const runtimeDir = getRuntimeDir();
+    if (runtimeDir) {
+      if (nodeCache && path.resolve(runtimeDir) === path.resolve(cacheDir)) {
+        throw new Error("runtime-dir must differ from cache-dir in node-cache mode");
+      }
+      core.exportVariable("KACHE_RUNTIME_DIR", runtimeDir);
+      core.info(`KACHE_RUNTIME_DIR=${runtimeDir}`);
+    }
+    let runtimeSupported = false;
+    if (runtimeDir && !process.env.KACHE_SOCKET_PATH) {
+      const status = await runKache(["daemon", "status"]);
+      runtimeSupported = daemonStatusUsesRuntimeDir(status, runtimeDir);
+    }
+    if (nodeCache) {
+      if (process.env.KACHE_SOCKET_PATH) {
+        throw new Error(
+          "node-cache does not accept KACHE_SOCKET_PATH because it would mask the runtime-directory compatibility check"
+        );
+      }
+      const health = checkNodeCacheStore(cacheDir);
+      if (!health.ok || !runtimeSupported) {
+        const reason = health.ok
+          ? "the installed Kache release does not honor KACHE_RUNTIME_DIR"
+          : health.reason;
+        cacheDir = nodeCacheFallbackDir();
+        nodeCache = false;
+        core.warning(
+          `Trusted node-local cache unavailable (${reason}); falling back to job-local cache with ordinary remote v3 behavior`
+        );
+        core.exportVariable("KACHE_CACHE_DIR", cacheDir);
+        core.exportVariable("KACHE_EFFECTIVE_CACHE_DIR", cacheDir);
+        core.info(`KACHE_CACHE_DIR=${cacheDir}`);
+      } else {
+        core.info(
+          "Trusted node-local cache enabled; GitHub Actions cache restore/save is disabled"
+        );
+      }
+    }
+    // Register cleanup after the job-private runtime is known, but before any
+    // later operation can start a daemon and fail.
+    core.saveState("node-cache", nodeCache ? "true" : "false");
 
     // Export S3 env vars if configured
     const s3Vars = {
@@ -137,8 +198,14 @@ async function run() {
 
     // Restore cache: S3 (daemon auto-prefetches from manifest), sync (legacy), or GitHub Actions cache
     const s3 = isS3Configured();
-    const ghCache = useGitHubCache();
+    const ghCache = useGitHubCache(nodeCache);
     const saveCacheEnabled = core.getBooleanInput("save-cache");
+    if (s3 && hasUnsafeEnvOnlyDaemonVersion(version) && !runtimeSupported) {
+      throw new Error(
+        "Kache 0.15.0 cannot safely inherit an environment-only S3 remote in its background daemon; use Kache 0.15.1 or newer"
+      );
+    }
+    core.saveState("stop-daemon", s3 && runtimeDir ? "true" : "false");
 
     // Keep S3 consumers genuinely read-only: the daemon normally uploads
     // artifacts during the build, before the post step gets a chance to skip.
