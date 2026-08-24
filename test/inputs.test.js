@@ -9,6 +9,7 @@ const utils = require("../src/utils");
 afterEach(() => {
   delete process.env["INPUT_S3-BUCKET"];
   delete process.env["INPUT_GITHUB-CACHE"];
+  delete process.env["INPUT_CACHE-DIR"];
   delete process.env.KACHE_CACHE_DIR;
   github.context.payload = {};
 });
@@ -40,6 +41,17 @@ test("local-only mode remains available when persistent backends are disabled", 
 test("getCacheDir honors KACHE_CACHE_DIR override", () => {
   process.env.KACHE_CACHE_DIR = "/custom/cache";
   assert.equal(utils.getCacheDir(), "/custom/cache");
+});
+
+test("getCacheDir honors the cache-dir input", () => {
+  process.env["INPUT_CACHE-DIR"] = "/runner/temp/kache";
+  assert.equal(utils.getCacheDir(), "/runner/temp/kache");
+});
+
+test("cache-dir input takes precedence over KACHE_CACHE_DIR", () => {
+  process.env.KACHE_CACHE_DIR = "/environment/cache";
+  process.env["INPUT_CACHE-DIR"] = "/input/cache";
+  assert.equal(utils.getCacheDir(), "/input/cache");
 });
 
 test("getCacheDir falls back to an absolute per-OS path ending in 'kache'", () => {

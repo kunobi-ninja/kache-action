@@ -38,6 +38,9 @@ inputs:
     description: "Use GitHub Actions cache for the local kache store (used when S3 is not configured)"
     required: false
     default: "true"
+  cache-dir:
+    description: "Local kache store directory. Set to ${{ runner.temp }}/kache when the cache must share a filesystem with the build workspace."
+    required: false
   save-cache:
     description: "Save cache changes after the build. Set false for restore-only jobs. With S3, this also disables remote uploads."
     required: false
