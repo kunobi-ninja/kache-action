@@ -17,6 +17,7 @@ const {
   nodeCacheFallbackDir,
   getRuntimeDir,
   daemonStatusUsesRuntimeDir,
+  hasUnsafeEnvOnlyDaemonVersion,
   restoreCache,
   clearEventLog,
   clearTransferLog,
@@ -116,6 +117,11 @@ async function run() {
       core.exportVariable("KACHE_RUNTIME_DIR", runtimeDir);
       core.info(`KACHE_RUNTIME_DIR=${runtimeDir}`);
     }
+    let runtimeSupported = false;
+    if (runtimeDir && !process.env.KACHE_SOCKET_PATH) {
+      const status = await runKache(["daemon", "status"]);
+      runtimeSupported = daemonStatusUsesRuntimeDir(status, runtimeDir);
+    }
     if (nodeCache) {
       if (process.env.KACHE_SOCKET_PATH) {
         throw new Error(
@@ -123,8 +129,7 @@ async function run() {
         );
       }
       const health = checkNodeCacheStore(cacheDir);
-      const status = health.ok ? await runKache(["daemon", "status"]) : "";
-      if (!health.ok || !daemonStatusUsesRuntimeDir(status, runtimeDir)) {
+      if (!health.ok || !runtimeSupported) {
         const reason = health.ok
           ? "the installed Kache release does not honor KACHE_RUNTIME_DIR"
           : health.reason;
@@ -195,6 +200,12 @@ async function run() {
     const s3 = isS3Configured();
     const ghCache = useGitHubCache(nodeCache);
     const saveCacheEnabled = core.getBooleanInput("save-cache");
+    if (s3 && hasUnsafeEnvOnlyDaemonVersion(version) && !runtimeSupported) {
+      throw new Error(
+        "Kache 0.15.0 cannot safely inherit an environment-only S3 remote in its background daemon; use Kache 0.15.1 or newer"
+      );
+    }
+    core.saveState("stop-daemon", s3 && runtimeDir ? "true" : "false");
 
     // Keep S3 consumers genuinely read-only: the daemon normally uploads
     // artifacts during the build, before the post step gets a chance to skip.

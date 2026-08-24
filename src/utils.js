@@ -252,11 +252,13 @@ function getRuntimeDir() {
   const input = core.getInput("runtime-dir");
   if (input) return input;
   if (process.env.KACHE_RUNTIME_DIR) return process.env.KACHE_RUNTIME_DIR;
-  if (!isNodeCacheEnabled()) return "";
 
   const runnerTemp = process.env.RUNNER_TEMP;
   if (!runnerTemp) {
-    throw new Error("node-cache requires RUNNER_TEMP or an explicit runtime-dir");
+    if (isNodeCacheEnabled()) {
+      throw new Error("node-cache requires RUNNER_TEMP or an explicit runtime-dir");
+    }
+    return "";
   }
   const identity = [
     process.env.GITHUB_RUN_ID || "run",
@@ -274,6 +276,13 @@ function getRuntimeDir() {
 function daemonStatusUsesRuntimeDir(status, runtimeDir) {
   if (!status || !runtimeDir) return false;
   return status.includes(path.join(runtimeDir, "daemon.sock"));
+}
+
+/** v0.15.0 refuses to let a persistent default daemon inherit a remote that
+ * exists only in the current job environment, but predates KACHE_RUNTIME_DIR.
+ * Older releases retain their legacy behaviour; v0.15.1+ supports isolation. */
+function hasUnsafeEnvOnlyDaemonVersion(version) {
+  return /^v?0\.15\.0$/.test((version || "").trim());
 }
 
 /** Build a GitHub Actions cache key from Cargo.lock files and kache version.
@@ -635,6 +644,7 @@ module.exports = {
   nodeCacheFallbackDir,
   getRuntimeDir,
   daemonStatusUsesRuntimeDir,
+  hasUnsafeEnvOnlyDaemonVersion,
   buildCacheKey,
   restoreCache,
   saveCache,

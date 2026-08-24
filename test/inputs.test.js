@@ -132,8 +132,7 @@ test("getCacheDir falls back to an absolute per-OS path ending in 'kache'", () =
   assert.ok(dir.startsWith(os.homedir()));
 });
 
-test("node-cache derives a stable job-scoped runtime dir", () => {
-  process.env["INPUT_NODE-CACHE"] = "true";
+test("every Actions job derives a stable job-scoped runtime dir", () => {
   process.env.RUNNER_TEMP = "/runner/temp";
   process.env.GITHUB_RUN_ID = "42";
   process.env.GITHUB_RUN_ATTEMPT = "2";
@@ -144,7 +143,7 @@ test("node-cache derives a stable job-scoped runtime dir", () => {
   );
 });
 
-test("runtime-dir input and environment override node-cache derivation", () => {
+test("runtime-dir input and environment override job derivation", () => {
   process.env["INPUT_NODE-CACHE"] = "true";
   process.env.RUNNER_TEMP = "/runner/temp";
   process.env.KACHE_RUNTIME_DIR = "/environment/runtime";
@@ -156,6 +155,10 @@ test("runtime-dir input and environment override node-cache derivation", () => {
 test("runtime-dir can explicitly retain the compatible cache path outside node-cache mode", () => {
   process.env["INPUT_RUNTIME-DIR"] = "/cache";
   assert.equal(utils.getRuntimeDir(), "/cache");
+});
+
+test("runtime-dir stays unset outside Actions when no override is provided", () => {
+  assert.equal(utils.getRuntimeDir(), "");
 });
 
 test("daemon status proves whether the installed Kache honors runtime-dir", () => {
@@ -171,6 +174,13 @@ test("daemon status proves whether the installed Kache honors runtime-dir", () =
     utils.daemonStatusUsesRuntimeDir("Socket: /shared/cache/daemon.sock", runtimeDir),
     false
   );
+});
+
+test("only Kache 0.15.0 has the unsafe environment-only daemon gap", () => {
+  assert.equal(utils.hasUnsafeEnvOnlyDaemonVersion("v0.15.0"), true);
+  assert.equal(utils.hasUnsafeEnvOnlyDaemonVersion("0.15.0"), true);
+  assert.equal(utils.hasUnsafeEnvOnlyDaemonVersion("v0.14.2"), false);
+  assert.equal(utils.hasUnsafeEnvOnlyDaemonVersion("v0.15.1"), false);
 });
 
 test("fork PR detection rejects fork flag and cross-repository heads", () => {

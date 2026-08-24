@@ -78224,11 +78224,13 @@ function getRuntimeDir() {
   const input = core.getInput("runtime-dir");
   if (input) return input;
   if (process.env.KACHE_RUNTIME_DIR) return process.env.KACHE_RUNTIME_DIR;
-  if (!isNodeCacheEnabled()) return "";
 
   const runnerTemp = process.env.RUNNER_TEMP;
   if (!runnerTemp) {
-    throw new Error("node-cache requires RUNNER_TEMP or an explicit runtime-dir");
+    if (isNodeCacheEnabled()) {
+      throw new Error("node-cache requires RUNNER_TEMP or an explicit runtime-dir");
+    }
+    return "";
   }
   const identity = [
     process.env.GITHUB_RUN_ID || "run",
@@ -78246,6 +78248,13 @@ function getRuntimeDir() {
 function daemonStatusUsesRuntimeDir(status, runtimeDir) {
   if (!status || !runtimeDir) return false;
   return status.includes(path.join(runtimeDir, "daemon.sock"));
+}
+
+/** v0.15.0 refuses to let a persistent default daemon inherit a remote that
+ * exists only in the current job environment, but predates KACHE_RUNTIME_DIR.
+ * Older releases retain their legacy behaviour; v0.15.1+ supports isolation. */
+function hasUnsafeEnvOnlyDaemonVersion(version) {
+  return /^v?0\.15\.0$/.test((version || "").trim());
 }
 
 /** Build a GitHub Actions cache key from Cargo.lock files and kache version.
@@ -78607,6 +78616,7 @@ module.exports = {
   nodeCacheFallbackDir,
   getRuntimeDir,
   daemonStatusUsesRuntimeDir,
+  hasUnsafeEnvOnlyDaemonVersion,
   buildCacheKey,
   restoreCache,
   saveCache,
@@ -120637,6 +120647,7 @@ const {
   nodeCacheFallbackDir,
   getRuntimeDir,
   daemonStatusUsesRuntimeDir,
+  hasUnsafeEnvOnlyDaemonVersion,
   restoreCache,
   clearEventLog,
   clearTransferLog,
@@ -120736,6 +120747,11 @@ async function run() {
       core.exportVariable("KACHE_RUNTIME_DIR", runtimeDir);
       core.info(`KACHE_RUNTIME_DIR=${runtimeDir}`);
     }
+    let runtimeSupported = false;
+    if (runtimeDir && !process.env.KACHE_SOCKET_PATH) {
+      const status = await runKache(["daemon", "status"]);
+      runtimeSupported = daemonStatusUsesRuntimeDir(status, runtimeDir);
+    }
     if (nodeCache) {
       if (process.env.KACHE_SOCKET_PATH) {
         throw new Error(
@@ -120743,8 +120759,7 @@ async function run() {
         );
       }
       const health = checkNodeCacheStore(cacheDir);
-      const status = health.ok ? await runKache(["daemon", "status"]) : "";
-      if (!health.ok || !daemonStatusUsesRuntimeDir(status, runtimeDir)) {
+      if (!health.ok || !runtimeSupported) {
         const reason = health.ok
           ? "the installed Kache release does not honor KACHE_RUNTIME_DIR"
           : health.reason;
@@ -120815,6 +120830,12 @@ async function run() {
     const s3 = isS3Configured();
     const ghCache = useGitHubCache(nodeCache);
     const saveCacheEnabled = core.getBooleanInput("save-cache");
+    if (s3 && hasUnsafeEnvOnlyDaemonVersion(version) && !runtimeSupported) {
+      throw new Error(
+        "Kache 0.15.0 cannot safely inherit an environment-only S3 remote in its background daemon; use Kache 0.15.1 or newer"
+      );
+    }
+    core.saveState("stop-daemon", s3 && runtimeDir ? "true" : "false");
 
     // Keep S3 consumers genuinely read-only: the daemon normally uploads
     // artifacts during the build, before the post step gets a chance to skip.
