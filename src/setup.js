@@ -10,7 +10,11 @@ const {
   runKache,
   isS3Configured,
   useGitHubCache,
+  isNodeCacheEnabled,
+  isForkPullRequest,
   getCacheDir,
+  getRuntimeDir,
+  daemonStatusUsesRuntimeDir,
   restoreCache,
   clearEventLog,
   clearTransferLog,
@@ -87,8 +91,47 @@ async function run() {
     // lets ephemeral runners place the store beside the build tree so reflinks
     // do not cross filesystem boundaries.
     const cacheDir = getCacheDir();
+    const nodeCache = isNodeCacheEnabled();
+    if (nodeCache && !core.getInput("cache-dir") && !process.env.KACHE_CACHE_DIR) {
+      throw new Error(
+        "node-cache requires an explicit cache-dir mounted only into the trusted runner pool"
+      );
+    }
+    if (nodeCache && os.platform() !== "linux") {
+      throw new Error("node-cache currently supports Linux ephemeral runners only");
+    }
+    if (nodeCache && isForkPullRequest()) {
+      throw new Error("node-cache is forbidden for pull requests from forks");
+    }
     core.exportVariable("KACHE_CACHE_DIR", cacheDir);
     core.info(`KACHE_CACHE_DIR=${cacheDir}`);
+    const runtimeDir = getRuntimeDir();
+    if (runtimeDir) {
+      if (nodeCache && path.resolve(runtimeDir) === path.resolve(cacheDir)) {
+        throw new Error("runtime-dir must differ from cache-dir in node-cache mode");
+      }
+      core.exportVariable("KACHE_RUNTIME_DIR", runtimeDir);
+      core.info(`KACHE_RUNTIME_DIR=${runtimeDir}`);
+    }
+    if (nodeCache) {
+      core.info(
+        "Trusted node-local cache enabled; GitHub Actions cache restore/save is disabled"
+      );
+      if (process.env.KACHE_SOCKET_PATH) {
+        throw new Error(
+          "node-cache does not accept KACHE_SOCKET_PATH because it would mask the runtime-directory compatibility check"
+        );
+      }
+      const status = await runKache(["daemon", "status"]);
+      if (!daemonStatusUsesRuntimeDir(status, runtimeDir)) {
+        throw new Error(
+          "the installed Kache release does not honor KACHE_RUNTIME_DIR; pin a compatible release before enabling node-cache"
+        );
+      }
+    }
+    // Register cleanup after the job-private runtime is known, but before any
+    // later operation can start a daemon and fail.
+    core.saveState("node-cache", nodeCache ? "true" : "false");
 
     // Export S3 env vars if configured
     const s3Vars = {

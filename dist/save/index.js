@@ -78109,7 +78109,26 @@ function isS3Configured() {
 
 /** Check if GitHub Actions cache should be used */
 function useGitHubCache() {
-  return !isS3Configured() && core.getInput("github-cache") === "true";
+  return (
+    !isNodeCacheEnabled() &&
+    !isS3Configured() &&
+    core.getInput("github-cache") === "true"
+  );
+}
+
+/** A persistent node cache is safe only when runner placement and the mount
+ * enforce a trust boundary. This fork check is defense in depth. */
+function isNodeCacheEnabled() {
+  return core.getInput("node-cache").trim().toLowerCase() === "true";
+}
+
+function isForkPullRequest() {
+  const pullRequest = github.context.payload?.pull_request;
+  if (!pullRequest) return false;
+  if (pullRequest.head?.repo?.fork === true) return true;
+  const head = pullRequest.head?.repo?.full_name;
+  const base = pullRequest.base?.repo?.full_name;
+  return Boolean(head && base && head !== base);
 }
 
 /** Prefix a C/C++ compiler command with kache, without double-wrapping. */
@@ -78151,6 +78170,35 @@ function getCacheDir() {
   const input = core.getInput("cache-dir");
   if (input) return input;
   return getCacheDirFor(os.platform(), process.env, os.homedir());
+}
+
+/** Resolve job-owned runtime state separately from a persistent cache store. */
+function getRuntimeDir() {
+  const input = core.getInput("runtime-dir");
+  if (input) return input;
+  if (process.env.KACHE_RUNTIME_DIR) return process.env.KACHE_RUNTIME_DIR;
+  if (!isNodeCacheEnabled()) return "";
+
+  const runnerTemp = process.env.RUNNER_TEMP;
+  if (!runnerTemp) {
+    throw new Error("node-cache requires RUNNER_TEMP or an explicit runtime-dir");
+  }
+  const identity = [
+    process.env.GITHUB_RUN_ID || "run",
+    process.env.GITHUB_RUN_ATTEMPT || "1",
+    process.env.GITHUB_JOB || "job",
+  ]
+    .join("-")
+    .replace(/[^A-Za-z0-9_.-]/g, "_");
+  return path.join(runnerTemp, `kache-runtime-${identity}`);
+}
+
+/** Fail-closed feature probe for Kache releases that understand
+ * KACHE_RUNTIME_DIR. `daemon status` resolves configuration without starting
+ * the daemon and prints the filesystem socket selector on every platform. */
+function daemonStatusUsesRuntimeDir(status, runtimeDir) {
+  if (!status || !runtimeDir) return false;
+  return status.includes(path.join(runtimeDir, "daemon.sock"));
 }
 
 /** Build a GitHub Actions cache key from Cargo.lock files and kache version.
@@ -78224,7 +78272,7 @@ async function saveCache() {
 
 /** Get path to kache's event log */
 function getEventLogPath() {
-  return path.join(getCacheDir(), "events.jsonl");
+  return path.join(getRuntimeDir() || getCacheDir(), "events.jsonl");
 }
 
 /** Clear the event log so we only capture this run's events */
@@ -78240,7 +78288,7 @@ function clearEventLog() {
 
 /** Clear the transfer log so we only capture this run's transfers */
 function clearTransferLog() {
-  const logPath = path.join(getCacheDir(), "transfers.jsonl");
+  const logPath = path.join(getRuntimeDir() || getCacheDir(), "transfers.jsonl");
   try {
     fs.writeFileSync(logPath, "");
     core.info("Cleared kache transfer log");
@@ -78491,10 +78539,14 @@ module.exports = {
   runKache,
   isS3Configured,
   useGitHubCache,
+  isNodeCacheEnabled,
+  isForkPullRequest,
   wrapCppCompiler,
   getCppCompilerEnv,
   getCacheDir,
   getCacheDirFor,
+  getRuntimeDir,
+  daemonStatusUsesRuntimeDir,
   buildCacheKey,
   restoreCache,
   saveCache,
@@ -120518,6 +120570,7 @@ const {
 } = __nccwpck_require__(95804);
 
 async function run() {
+  const nodeCache = core.getState("node-cache") === "true";
   try {
     // Skip post step if [no-cache] was detected during setup
     if (core.getState("no-cache") === "true") {
@@ -120654,6 +120707,15 @@ async function run() {
   } catch (error) {
     // Post step should not fail the build
     core.warning(`kache post step failed: ${error.message}`);
+  } finally {
+    if (nodeCache) {
+      try {
+        core.info("Stopping job-scoped kache daemon...");
+        await runKache(["daemon", "stop"]);
+      } catch (error) {
+        core.warning(`Failed to stop job-scoped kache daemon: ${error.message}`);
+      }
+    }
   }
 }
 

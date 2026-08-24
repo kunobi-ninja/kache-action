@@ -11,6 +11,7 @@ const {
 } = require("./utils");
 
 async function run() {
+  const nodeCache = core.getState("node-cache") === "true";
   try {
     // Skip post step if [no-cache] was detected during setup
     if (core.getState("no-cache") === "true") {
@@ -147,6 +148,15 @@ async function run() {
   } catch (error) {
     // Post step should not fail the build
     core.warning(`kache post step failed: ${error.message}`);
+  } finally {
+    if (nodeCache) {
+      try {
+        core.info("Stopping job-scoped kache daemon...");
+        await runKache(["daemon", "stop"]);
+      } catch (error) {
+        core.warning(`Failed to stop job-scoped kache daemon: ${error.message}`);
+      }
+    }
   }
 }
 
