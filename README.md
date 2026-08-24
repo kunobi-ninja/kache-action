@@ -84,6 +84,18 @@ jobs:
 
 GitHub Actions cache has a 10 GB limit per repo. For larger projects or shared caches across repos, use S3.
 
+### Restore without saving
+
+Use `save-cache: false` to restore an existing cache without writing changes back. This is useful for keeping one-off PR and branch jobs from consuming cache storage:
+
+```yaml
+- uses: kunobi-ninja/kache-action@v1
+  with:
+    save-cache: ${{ github.ref_name == github.event.repository.default_branch }}
+```
+
+With GitHub Actions cache, restore still runs but the post-step save is skipped. With S3, kache runs in remote read-only mode, so daemon uploads, manifest writes, and the final push are disabled while reads and prefetch remain available.
+
 ## Inputs
 
 | Input | Default | Description |
@@ -97,6 +109,7 @@ GitHub Actions cache has a 10 GB limit per repo. For larger projects or shared c
 | `s3-secret-access-key` | — | S3 secret access key |
 | `cache-executables` | `false` | Also cache bin/dylib/proc-macro outputs |
 | `github-cache` | `true` | Use GitHub Actions cache for the local store when S3 is not configured |
+| `save-cache` | `true` | Save cache changes after the build. Set to `false` for restore-only jobs; with S3 this also disables remote uploads. |
 | `cache-key-prefix` | `kache` | Prefix for the GitHub Actions cache key |
 | `sync` | `false` | Pull the **entire** remote cache on setup (slow; prefer `warm`). S3 only. |
 | `warm` | `true` | Auto-prefetch expensive artifacts from the build manifest on daemon startup. S3 only. |
@@ -104,7 +117,8 @@ GitHub Actions cache has a 10 GB limit per repo. For larger projects or shared c
 | `namespace` | `manifest-key` | Enables content-addressed **shards** (see [Manifest vs shards](#manifest-vs-shards)) — sharded prefetch + shard upload. Defaults to `manifest-key`, so scoping a build also turns shards on. Leave both empty to disable shards. |
 | `min-compile-ms` | `1000` | Skip prefetching crates that compiled faster than this (ms) — cheaper to recompile. |
 | `token` | `${{ github.token }}` | GitHub token for fetching releases and posting PR comments (needs `pull-requests: write` for comments) |
-| `pr-comment` | `true` | Post/update a sticky PR comment with cache stats. The job summary is always written regardless. |
+| `pr-comment` | `true` | Post/update a sticky PR comment with cache stats. |
+| `job-summary` | `true` | Write cache stats to the GitHub Actions job summary. |
 | `max-size` | `50GiB` (kache default) | Max local kache store size before LRU eviction (e.g. `100GiB`). Maps to `KACHE_MAX_SIZE`. Controls the **local** store, not a remote/S3 cap. |
 
 > **S3-only inputs:** `sync`, `warm`, `manifest-key`, `namespace`, and `min-compile-ms` only take effect with the S3 backend. They tune how the kache daemon *selectively prefetches* expensive artifacts from the remote during setup. The GitHub Actions cache backend has nothing to prefetch — it restores the entire local store in one shot via `@actions/cache` and starts no daemon — so these inputs are ignored when S3 is not configured.
@@ -130,11 +144,11 @@ Both make the daemon's warm prefetch *selective* (pull the expensive artifacts, 
    - **GitHub** — restores the local store via `@actions/cache`.
 
 **Post step** (runs after your build, even on failure):
-1. Saves the cache:
+1. Saves the cache unless `save-cache: false`:
    - **S3** — records the build manifest with `kache save-manifest` (so the next run knows what to warm), uploading per-dependency shards too when `namespace` is set, then pushes with `kache sync --push`.
    - **GitHub** — saves the local store via `@actions/cache`.
 2. Generates the report with `kache report --format github --since 24h` and posts/updates a sticky PR comment from it (hit rate plus a cache-miss breakdown)
-3. Writes that same report as the job summary (always, even outside PRs)
+3. Writes that same report as the job summary unless `job-summary: false`
 
 If a PR description contains `[no-cache]`, setup and the post step are both skipped for that run.
 
@@ -147,9 +161,9 @@ On pull requests, the post step posts (or updates) a comment rendered by `kache 
 - Hit rate, local/remote hit counts, and miss count at a glance
 - A breakdown of cache misses by compile time, so you can see which crates are the most expensive to rebuild
 
-The comment is updated in-place on re-runs — no spam. Requires `pull-requests: write` permission on the token (the default `GITHUB_TOKEN` has this in most setups). The same report is always written to the job summary regardless of this setting.
+The comment is updated in-place on re-runs — no spam. Requires `pull-requests: write` permission on the token (the default `GITHUB_TOKEN` has this in most setups). The job summary is controlled independently with `job-summary`.
 
-In matrix builds, each job posts its own comment, labeled with the job name and target triple (e.g. `### kache build cache — build (x86_64-unknown-linux-musl)`), so stats are never ambiguous or overwritten between jobs. To turn the comment off entirely and rely on the per-job job summary instead, set `pr-comment: false`.
+In matrix builds, each job posts its own comment, labeled with the job name and target triple (e.g. `### kache build cache — build (x86_64-unknown-linux-musl)`), so stats are never ambiguous or overwritten between jobs. Set `pr-comment: false` and/or `job-summary: false` to disable either output independently.
 
 ## License
 

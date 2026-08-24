@@ -34,6 +34,10 @@ inputs:
     description: "Use GitHub Actions cache for the local kache store (used when S3 is not configured)"
     required: false
     default: "true"
+  save-cache:
+    description: "Save cache changes after the build. Set false for restore-only jobs. With S3, this also disables remote uploads."
+    required: false
+    default: "true"
   cache-key-prefix:
     description: "Custom prefix for GitHub Actions cache key"
     required: false
@@ -63,7 +67,11 @@ inputs:
     required: false
     default: ${{ github.token }}
   pr-comment:
-    description: "Post/update a sticky PR comment with cache stats. The job summary is always written regardless."
+    description: "Post/update a sticky PR comment with cache stats."
+    required: false
+    default: "true"
+  job-summary:
+    description: "Write cache stats to the GitHub Actions job summary."
     required: false
     default: "true"
   max-size:

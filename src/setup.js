@@ -117,16 +117,21 @@ async function run() {
     // Restore cache: S3 (daemon auto-prefetches from manifest), sync (legacy), or GitHub Actions cache
     const s3 = isS3Configured();
     const ghCache = useGitHubCache();
+    const saveCacheEnabled = core.getBooleanInput("save-cache");
 
-    // Warn when kache provides limited or no value in CI
+    // Keep S3 consumers genuinely read-only: the daemon normally uploads
+    // artifacts during the build, before the post step gets a chance to skip.
+    if (s3 && !saveCacheEnabled) {
+      core.exportVariable("KACHE_REMOTE_READONLY", "1");
+      core.info("Remote cache writes disabled (save-cache: false)");
+    }
+
+    // Local-only caching is useful when multiple steps share the same runner,
+    // even when no persistent backend is configured.
     if (!s3 && !ghCache) {
-      core.warning(
-        "kache: no S3 remote configured and GitHub Actions cache is disabled — " +
-        "skipping RUSTC_WRAPPER. Without persistent storage, kache adds overhead " +
-        "but provides no caching benefit in CI. Configure s3-bucket or enable " +
-        "github-cache to use kache."
+      core.info(
+        "No persistent cache backend configured — using the local kache store only"
       );
-      return;
     }
     if (!s3 && ghCache) {
       core.warning(
@@ -176,6 +181,7 @@ async function run() {
     core.saveState("start-time", Date.now().toString());
     core.saveState("s3-configured", s3 ? "true" : "false");
     core.saveState("gh-cache", ghCache ? "true" : "false");
+    core.saveState("save-cache", saveCacheEnabled ? "true" : "false");
     core.saveState("kache-version", version);
   } catch (error) {
     core.setFailed(error.message);
