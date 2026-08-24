@@ -46,7 +46,7 @@ inputs:
     required: false
     default: "false"
   runtime-dir:
-    description: "Job-scoped kache runtime directory for sockets, locks, logs, events, and build-session state. In node-cache mode this defaults under runner.temp."
+    description: "Job-scoped kache runtime directory for sockets, locks, logs, events, and build-session state. In GitHub Actions this defaults under runner.temp for every job."
     required: false
   save-cache:
     description: "Save cache changes after the build. Set false for restore-only jobs. With S3, this also disables remote uploads."

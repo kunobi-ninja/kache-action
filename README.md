@@ -163,7 +163,7 @@ keeping ordinary S3/v3 behavior. Trust-policy violations still fail closed.
 | `github-cache` | `true` | Use GitHub Actions cache for the local store when S3 is not configured |
 | `cache-dir` | native kache cache directory | Local kache store directory. Use `${{ runner.temp }}/kache` to colocate it with the runner workspace. |
 | `node-cache` | `false` | Reuse `cache-dir` as a trusted node-local store across ephemeral jobs. Requires a runner mount trust boundary and disables GitHub Actions cache persistence. |
-| `runtime-dir` | job-scoped under `runner.temp` in node-cache mode | Override sockets, locks, logs, events, and build-session state. |
+| `runtime-dir` | job-scoped under `runner.temp` in Actions | Override sockets, locks, logs, events, and build-session state. Every Actions job is isolated, even when `cache-dir` is persistent. |
 | `save-cache` | `true` | Save cache changes after the build. Set to `false` for restore-only jobs; with S3 this also disables remote uploads. |
 | `cache-key-prefix` | `kache` | Prefix for the GitHub Actions cache key |
 | `sync` | `false` | Pull the **entire** remote cache on setup (slow; prefer `warm`). S3 only. |
