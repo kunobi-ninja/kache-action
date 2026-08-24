@@ -39,7 +39,7 @@ inputs:
     required: false
     default: "true"
   cache-dir:
-    description: "Local kache store directory. Set to ${{ runner.temp }}/kache when the cache must share a filesystem with the build workspace."
+    description: "Local kache store directory. Point it at a RUNNER_TEMP subpath (e.g. RUNNER_TEMP/kache) when the store must share a filesystem with the build workspace."
     required: false
   node-cache:
     description: "On Linux ephemeral runners, reuse cache-dir as a trusted node-local store across jobs. Requires an explicit cache-dir mounted only into one trusted runner pool; disables GitHub Actions cache persistence."

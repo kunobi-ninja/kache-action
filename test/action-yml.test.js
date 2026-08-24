@@ -84,3 +84,14 @@ test("node-cache is explicit and runtime-dir stays optional", () => {
   assert.match(inputDefinition("runtime-dir"), /^ {4}required: false$/m);
   assert.doesNotMatch(inputDefinition("runtime-dir"), /^ {4}default:/m);
 });
+
+test("no input description contains an expression (metadata context cannot resolve runner.* and would brick parsing)", () => {
+  const yml = fs.readFileSync(path.join(ROOT, "action.yml"), "utf8");
+  const inputsStart = yml.indexOf("\ninputs:");
+  const runsStart = yml.indexOf("\nruns:");
+  const inputsBlock = yml.slice(inputsStart, runsStart);
+  const offenders = [...inputsBlock.matchAll(/description:.*\$\{\{([^}]*)\}/g)].map(
+    (m) => m[1].trim()
+  );
+  assert.deepEqual(offenders, [], `expressions found in input descriptions: ${offenders.join(", ")}`);
+});
