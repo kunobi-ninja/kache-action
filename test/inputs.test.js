@@ -13,6 +13,7 @@ afterEach(() => {
   delete process.env["INPUT_NODE-CACHE"];
   delete process.env["INPUT_RUNTIME-DIR"];
   delete process.env.KACHE_CACHE_DIR;
+  delete process.env.KACHE_EFFECTIVE_CACHE_DIR;
   delete process.env.KACHE_RUNTIME_DIR;
   delete process.env.RUNNER_TEMP;
   delete process.env.GITHUB_RUN_ID;
@@ -63,6 +64,65 @@ test("cache-dir input takes precedence over KACHE_CACHE_DIR", () => {
   process.env.KACHE_CACHE_DIR = "/environment/cache";
   process.env["INPUT_CACHE-DIR"] = "/input/cache";
   assert.equal(utils.getCacheDir(), "/input/cache");
+});
+
+test("effective cache dir overrides the requested mounted path after fallback", () => {
+  process.env["INPUT_CACHE-DIR"] = "/mounted/cache";
+  process.env.KACHE_EFFECTIVE_CACHE_DIR = "/runner/temp/kache-fallback";
+  assert.equal(utils.getCacheDir(), "/runner/temp/kache-fallback");
+});
+
+test("node-cache health accepts a writable store with sufficient free space", () => {
+  const calls = [];
+  const fakeFs = {
+    mkdirSync: (...args) => calls.push(["mkdir", ...args]),
+    writeFileSync: (...args) => calls.push(["write", ...args]),
+    unlinkSync: (...args) => calls.push(["unlink", ...args]),
+    statfsSync: () => ({ bavail: 20n, bsize: 1024n * 1024n * 1024n }),
+  };
+  assert.deepEqual(utils.checkNodeCacheStore("/node/cache", fakeFs), { ok: true });
+  assert.equal(calls[0][0], "mkdir");
+  assert.equal(calls[1][0], "write");
+  assert.equal(calls[2][0], "unlink");
+});
+
+test("node-cache health fails open on read-only or disk-pressure stores", () => {
+  const readOnly = {
+    mkdirSync: () => {},
+    writeFileSync: () => {
+      throw new Error("read-only filesystem");
+    },
+    unlinkSync: () => {},
+  };
+  assert.match(
+    utils.checkNodeCacheStore("/node/cache", readOnly).reason,
+    /read-only/
+  );
+
+  const diskPressure = {
+    mkdirSync: () => {},
+    writeFileSync: () => {},
+    unlinkSync: () => {},
+    statfsSync: () => ({ bavail: 1n, bsize: 1024n }),
+  };
+  const result = utils.checkNodeCacheStore("/node/cache", diskPressure);
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /free bytes/);
+});
+
+test("node-cache fallback remains eligible for ordinary GitHub cache", () => {
+  process.env["INPUT_NODE-CACHE"] = "true";
+  process.env["INPUT_GITHUB-CACHE"] = "true";
+  assert.equal(utils.useGitHubCache(true), false);
+  assert.equal(utils.useGitHubCache(false), true);
+});
+
+test("node-cache fallback path is job-local", () => {
+  process.env.RUNNER_TEMP = "/runner/temp";
+  assert.equal(
+    utils.nodeCacheFallbackDir(),
+    path.join("/runner/temp", "kache-fallback")
+  );
 });
 
 test("getCacheDir falls back to an absolute per-OS path ending in 'kache'", () => {

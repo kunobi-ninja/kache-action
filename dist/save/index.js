@@ -78108,9 +78108,9 @@ function isS3Configured() {
 }
 
 /** Check if GitHub Actions cache should be used */
-function useGitHubCache() {
+function useGitHubCache(nodeCacheEnabled = isNodeCacheEnabled()) {
   return (
-    !isNodeCacheEnabled() &&
+    !nodeCacheEnabled &&
     !isS3Configured() &&
     core.getInput("github-cache") === "true"
   );
@@ -78167,9 +78167,56 @@ function getCacheDirFor(platform, env, home) {
 /** Get the kache local cache directory. An action input takes precedence over
  *  KACHE_CACHE_DIR so the selected path can be exported consistently to kache. */
 function getCacheDir() {
+  if (process.env.KACHE_EFFECTIVE_CACHE_DIR) {
+    return process.env.KACHE_EFFECTIVE_CACHE_DIR;
+  }
   const input = core.getInput("cache-dir");
   if (input) return input;
   return getCacheDirFor(os.platform(), process.env, os.homedir());
+}
+
+const NODE_CACHE_MIN_FREE_BYTES = 10 * 1024 * 1024 * 1024;
+
+/** Verify that the persistent node store is writable and has enough headroom
+ * for a representative Rust build. Operational failures fail open to the
+ * ordinary job-local store; trust-policy failures are rejected by setup. */
+function checkNodeCacheStore(cacheDir, fsApi = __nccwpck_require__(79896)) {
+  const probe = path.join(
+    cacheDir,
+    `.kache-action-probe-${process.pid}-${Date.now()}`
+  );
+  try {
+    fsApi.mkdirSync(cacheDir, { recursive: true });
+    fsApi.writeFileSync(probe, "ok", { flag: "wx", mode: 0o600 });
+    fsApi.unlinkSync(probe);
+
+    if (typeof fsApi.statfsSync === "function") {
+      const stats = fsApi.statfsSync(cacheDir, { bigint: true });
+      const free = stats.bavail * stats.bsize;
+      if (free < BigInt(NODE_CACHE_MIN_FREE_BYTES)) {
+        return {
+          ok: false,
+          reason: `node cache has only ${free} free bytes (requires ${NODE_CACHE_MIN_FREE_BYTES})`,
+        };
+      }
+    }
+    return { ok: true };
+  } catch (error) {
+    try {
+      fsApi.unlinkSync(probe);
+    } catch {
+      // The probe may not have been created.
+    }
+    return { ok: false, reason: error.message || String(error) };
+  }
+}
+
+function nodeCacheFallbackDir() {
+  const runnerTemp = process.env.RUNNER_TEMP;
+  if (!runnerTemp) {
+    throw new Error("node-cache fallback requires RUNNER_TEMP");
+  }
+  return path.join(runnerTemp, "kache-fallback");
 }
 
 /** Resolve job-owned runtime state separately from a persistent cache store. */
@@ -78545,6 +78592,8 @@ module.exports = {
   getCppCompilerEnv,
   getCacheDir,
   getCacheDirFor,
+  checkNodeCacheStore,
+  nodeCacheFallbackDir,
   getRuntimeDir,
   daemonStatusUsesRuntimeDir,
   buildCacheKey,

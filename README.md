@@ -131,7 +131,7 @@ the store persistent but move every daemon/socket/log/session file into the job:
 ```yaml
 - uses: kunobi-ninja/kache-action@v1
   with:
-    cache-dir: /var/cache/kache/kunobi-trusted
+    cache-dir: ${{ runner.temp }}/kache
     node-cache: true
 ```
 
@@ -141,6 +141,11 @@ store must exist only on a runner scale set restricted to mutually trusted
 repositories/workflows. The action rejects fork PRs as defense in depth, but an
 `if:` condition is not a security boundary: untrusted pods must never receive the
 mount.
+
+At startup the action verifies that the mounted store is writable, has at least
+10 GiB free, and that the installed Kache release honors the job-scoped runtime.
+An operational failure falls back to `${{ runner.temp }}/kache-fallback` while
+keeping ordinary S3/v3 behavior. Trust-policy violations still fail closed.
 
 ## Inputs
 
