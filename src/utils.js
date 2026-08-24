@@ -140,6 +140,22 @@ function useGitHubCache() {
   return !isS3Configured() && core.getInput("github-cache") === "true";
 }
 
+/** Prefix a C/C++ compiler command with kache, without double-wrapping. */
+function wrapCppCompiler(command, fallback) {
+  const compiler = (command || "").trim() || fallback;
+  if (/^kache(?:\.exe)?(?:\s|$)/i.test(compiler)) return compiler;
+  return `kache ${compiler}`;
+}
+
+/** Resolve the CC/CXX commands exported by the opt-in C/C++ cache mode. */
+function getCppCompilerEnv(platform, env = process.env) {
+  const windows = platform === "win32";
+  return {
+    CC: wrapCppCompiler(env.CC, windows ? "clang-cl" : "cc"),
+    CXX: wrapCppCompiler(env.CXX, windows ? "clang-cl" : "c++"),
+  };
+}
+
 /** Resolve the kache cache dir for an explicit platform/env/home. Mirrors
  *  kache's `dirs::cache_dir().join("kache")`. Pure — unit-testable per platform.
  *  - macOS: ~/Library/Caches/kache
@@ -500,6 +516,8 @@ module.exports = {
   runKache,
   isS3Configured,
   useGitHubCache,
+  wrapCppCompiler,
+  getCppCompilerEnv,
   getCacheDir,
   getCacheDirFor,
   buildCacheKey,

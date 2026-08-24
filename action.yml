@@ -30,6 +30,10 @@ inputs:
     description: "Cache bin/dylib/proc-macro outputs"
     required: false
     default: "false"
+  cache-c-cpp:
+    description: "Cache supported C/C++ object compiles by wrapping CC and CXX. Disabled by default."
+    required: false
+    default: "false"
   github-cache:
     description: "Use GitHub Actions cache for the local kache store (used when S3 is not configured)"
     required: false
