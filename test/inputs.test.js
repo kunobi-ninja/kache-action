@@ -31,6 +31,12 @@ test("useGitHubCache is true only when S3 is absent and github-cache is true", (
   assert.equal(utils.useGitHubCache(), false);
 });
 
+test("local-only mode remains available when persistent backends are disabled", () => {
+  process.env["INPUT_GITHUB-CACHE"] = "false";
+  assert.equal(utils.isS3Configured(), false);
+  assert.equal(utils.useGitHubCache(), false);
+});
+
 test("getCacheDir honors KACHE_CACHE_DIR override", () => {
   process.env.KACHE_CACHE_DIR = "/custom/cache";
   assert.equal(utils.getCacheDir(), "/custom/cache");

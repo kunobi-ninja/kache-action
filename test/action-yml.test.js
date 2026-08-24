@@ -17,6 +17,16 @@ function declaredInputs() {
   return new Set([...block.matchAll(/^ {2}([a-z0-9-]+):\s*$/gm)].map((m) => m[1]));
 }
 
+function inputDefinition(name) {
+  const yml = fs
+    .readFileSync(path.join(ROOT, "action.yml"), "utf8")
+    .replace(/\r\n/g, "\n");
+  const match = yml.match(
+    new RegExp(`^  ${name}:\\n((?: {4}.*\\n?)*)`, "m")
+  );
+  return match?.[1] || "";
+}
+
 function usedInputLiterals() {
   const srcDir = path.join(ROOT, "src");
   const used = new Map(); // name -> file it appears in
@@ -52,4 +62,9 @@ test("every getInput literal in src is declared in action.yml", () => {
       .map(([n, f]) => `"${n}" (${f})`)
       .join(", ")}`
   );
+});
+
+test("cache saving and job summaries are opt-out by default", () => {
+  assert.match(inputDefinition("save-cache"), /^ {4}default: "true"$/m);
+  assert.match(inputDefinition("job-summary"), /^ {4}default: "true"$/m);
 });

@@ -20,9 +20,12 @@ async function run() {
 
     const s3Configured = core.getState("s3-configured") === "true";
     const ghCache = core.getState("gh-cache") === "true";
+    const saveCacheEnabled = core.getState("save-cache") !== "false";
 
     // Push cache: S3 or GitHub Actions cache
-    if (s3Configured) {
+    if (!saveCacheEnabled) {
+      core.info("Cache saving disabled (save-cache: false)");
+    } else if (s3Configured) {
       // Save manifest first — records which keys were used + cost data for next warm
       const saveArgs = ["save-manifest"];
       const manifestKey = core.getInput("manifest-key");
@@ -117,19 +120,30 @@ async function run() {
       core.info("PR comment disabled (pr-comment: false)");
     }
 
-    // Write job summary (always, even outside PRs).
-    // commentBody from `kache report` already carries its own
-    // "### kache build cache" title, so only add a heading for the
-    // legacy fallback below to avoid a double title.
-    let summary = core.summary;
-    if (commentBody) {
-      summary = summary.addRaw(commentBody).addRaw("\n");
-    } else {
-      summary = summary
-        .addHeading("Kache Build Cache", 2)
-        .addRaw(`**Backend:** ${backend} | **Duration:** ${duration}s\n\n`);
+    // Write the job summary unless explicitly disabled. commentBody from
+    // `kache report` already carries its own "### kache build cache" title,
+    // so only add a heading for the legacy fallback.
+    let jobSummaryEnabled = true;
+    try {
+      jobSummaryEnabled = core.getBooleanInput("job-summary");
+    } catch {
+      core.warning(
+        "Invalid job-summary value (expected true/false) — defaulting to true"
+      );
     }
-    await summary.write();
+    if (!jobSummaryEnabled) {
+      core.info("Job summary disabled (job-summary: false)");
+    } else {
+      let summary = core.summary;
+      if (commentBody) {
+        summary = summary.addRaw(commentBody).addRaw("\n");
+      } else {
+        summary = summary
+          .addHeading("Kache Build Cache", 2)
+          .addRaw(`**Backend:** ${backend} | **Duration:** ${duration}s\n\n`);
+      }
+      await summary.write();
+    }
   } catch (error) {
     // Post step should not fail the build
     core.warning(`kache post step failed: ${error.message}`);
