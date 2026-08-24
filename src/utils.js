@@ -173,8 +173,11 @@ function getCacheDirFor(platform, env, home) {
   return path.join(home, ".cache", "kache");
 }
 
-/** Get the kache local cache directory (matches kache's default_cache_dir) */
+/** Get the kache local cache directory. An action input takes precedence over
+ *  KACHE_CACHE_DIR so the selected path can be exported consistently to kache. */
 function getCacheDir() {
+  const input = core.getInput("cache-dir");
+  if (input) return input;
   return getCacheDirFor(os.platform(), process.env, os.homedir());
 }
 

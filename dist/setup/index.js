@@ -78145,8 +78145,11 @@ function getCacheDirFor(platform, env, home) {
   return path.join(home, ".cache", "kache");
 }
 
-/** Get the kache local cache directory (matches kache's default_cache_dir) */
+/** Get the kache local cache directory. An action input takes precedence over
+ *  KACHE_CACHE_DIR so the selected path can be exported consistently to kache. */
 function getCacheDir() {
+  const input = core.getInput("cache-dir");
+  if (input) return input;
   return getCacheDirFor(os.platform(), process.env, os.homedir());
 }
 
@@ -120514,6 +120517,7 @@ const {
   runKache,
   isS3Configured,
   useGitHubCache,
+  getCacheDir,
   restoreCache,
   clearEventLog,
   clearTransferLog,
@@ -120585,6 +120589,13 @@ async function run() {
     // Export version so buildCacheKey() can include it in the GH cache key.
     // This ensures kache upgrades invalidate stale caches (GH cache is immutable).
     core.exportVariable("KACHE_VERSION", version);
+
+    // Keep kache itself and the action's restore/save paths aligned. This also
+    // lets ephemeral runners place the store beside the build tree so reflinks
+    // do not cross filesystem boundaries.
+    const cacheDir = getCacheDir();
+    core.exportVariable("KACHE_CACHE_DIR", cacheDir);
+    core.info(`KACHE_CACHE_DIR=${cacheDir}`);
 
     // Export S3 env vars if configured
     const s3Vars = {

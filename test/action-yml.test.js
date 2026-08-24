@@ -72,3 +72,9 @@ test("cache saving and job summaries are opt-out by default", () => {
 test("C/C++ caching is opt-in by default", () => {
   assert.match(inputDefinition("cache-c-cpp"), /^ {4}default: "false"$/m);
 });
+
+test("cache-dir is optional and has no platform-specific default", () => {
+  const definition = inputDefinition("cache-dir");
+  assert.match(definition, /^ {4}required: false$/m);
+  assert.doesNotMatch(definition, /^ {4}default:/m);
+});

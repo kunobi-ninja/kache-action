@@ -110,6 +110,21 @@ Use `save-cache: false` to restore an existing cache without writing changes bac
 
 With GitHub Actions cache, restore still runs but the post-step save is skipped. With S3, kache runs in remote read-only mode, so daemon uploads, manifest writes, and the final push are disabled while reads and prefetch remain available.
 
+### Cache location
+
+By default, the action uses kache's native per-user cache directory. To keep the
+cache and build workspace on the same filesystem, set `cache-dir` explicitly:
+
+```yaml
+- uses: kunobi-ninja/kache-action@v1
+  with:
+    cache-dir: ${{ runner.temp }}/kache
+```
+
+This is useful on GitHub-hosted Windows runners and ephemeral self-hosted runners
+whose home and workspace directories are on different volumes. Persistent
+self-hosted runners can omit the input to retain a warm cache between jobs.
+
 ## Inputs
 
 | Input | Default | Description |
@@ -124,6 +139,7 @@ With GitHub Actions cache, restore still runs but the post-step save is skipped.
 | `cache-executables` | `false` | Also cache bin/dylib/proc-macro outputs |
 | `cache-c-cpp` | `false` | Wrap `CC`/`CXX` to cache supported C/C++ object compiles. Uses `cc`/`c++` on Unix and `clang-cl` on Windows. |
 | `github-cache` | `true` | Use GitHub Actions cache for the local store when S3 is not configured |
+| `cache-dir` | native kache cache directory | Local kache store directory. Use `${{ runner.temp }}/kache` to colocate it with the runner workspace. |
 | `save-cache` | `true` | Save cache changes after the build. Set to `false` for restore-only jobs; with S3 this also disables remote uploads. |
 | `cache-key-prefix` | `kache` | Prefix for the GitHub Actions cache key |
 | `sync` | `false` | Pull the **entire** remote cache on setup (slow; prefer `warm`). S3 only. |
