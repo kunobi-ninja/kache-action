@@ -68,3 +68,7 @@ test("cache saving and job summaries are opt-out by default", () => {
   assert.match(inputDefinition("save-cache"), /^ {4}default: "true"$/m);
   assert.match(inputDefinition("job-summary"), /^ {4}default: "true"$/m);
 });
+
+test("C/C++ caching is opt-in by default", () => {
+  assert.match(inputDefinition("cache-c-cpp"), /^ {4}default: "false"$/m);
+});

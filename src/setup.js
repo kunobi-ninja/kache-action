@@ -14,6 +14,7 @@ const {
   clearEventLog,
   clearTransferLog,
   isNoCacheRequested,
+  getCppCompilerEnv,
 } = require("./utils");
 
 async function run() {
@@ -105,6 +106,18 @@ async function run() {
     // Cache executables option
     if (core.getInput("cache-executables") === "true") {
       core.exportVariable("KACHE_CACHE_EXECUTABLES", "1");
+    }
+
+    // Opt-in C/C++ object caching. Preserve an explicitly configured real
+    // compiler and otherwise use kache's supported platform defaults.
+    if (core.getBooleanInput("cache-c-cpp")) {
+      const compilerEnv = getCppCompilerEnv(os.platform(), process.env);
+      core.exportVariable("CC", compilerEnv.CC);
+      core.exportVariable("CXX", compilerEnv.CXX);
+      // The Rust `cc` crate needs custom wrappers declared explicitly so it
+      // keeps the wrapped compiler as argv[1].
+      core.exportVariable("CC_KNOWN_WRAPPER_CUSTOM", "kache");
+      core.info("C/C++ caching enabled via CC and CXX");
     }
 
     // Max local store size before LRU eviction (applies regardless of backend)

@@ -78112,6 +78112,22 @@ function useGitHubCache() {
   return !isS3Configured() && core.getInput("github-cache") === "true";
 }
 
+/** Prefix a C/C++ compiler command with kache, without double-wrapping. */
+function wrapCppCompiler(command, fallback) {
+  const compiler = (command || "").trim() || fallback;
+  if (/^kache(?:\.exe)?(?:\s|$)/i.test(compiler)) return compiler;
+  return `kache ${compiler}`;
+}
+
+/** Resolve the CC/CXX commands exported by the opt-in C/C++ cache mode. */
+function getCppCompilerEnv(platform, env = process.env) {
+  const windows = platform === "win32";
+  return {
+    CC: wrapCppCompiler(env.CC, windows ? "clang-cl" : "cc"),
+    CXX: wrapCppCompiler(env.CXX, windows ? "clang-cl" : "c++"),
+  };
+}
+
 /** Resolve the kache cache dir for an explicit platform/env/home. Mirrors
  *  kache's `dirs::cache_dir().join("kache")`. Pure — unit-testable per platform.
  *  - macOS: ~/Library/Caches/kache
@@ -78472,6 +78488,8 @@ module.exports = {
   runKache,
   isS3Configured,
   useGitHubCache,
+  wrapCppCompiler,
+  getCppCompilerEnv,
   getCacheDir,
   getCacheDirFor,
   buildCacheKey,
@@ -120500,6 +120518,7 @@ const {
   clearEventLog,
   clearTransferLog,
   isNoCacheRequested,
+  getCppCompilerEnv,
 } = __nccwpck_require__(95804);
 
 async function run() {
@@ -120591,6 +120610,18 @@ async function run() {
     // Cache executables option
     if (core.getInput("cache-executables") === "true") {
       core.exportVariable("KACHE_CACHE_EXECUTABLES", "1");
+    }
+
+    // Opt-in C/C++ object caching. Preserve an explicitly configured real
+    // compiler and otherwise use kache's supported platform defaults.
+    if (core.getBooleanInput("cache-c-cpp")) {
+      const compilerEnv = getCppCompilerEnv(os.platform(), process.env);
+      core.exportVariable("CC", compilerEnv.CC);
+      core.exportVariable("CXX", compilerEnv.CXX);
+      // The Rust `cc` crate needs custom wrappers declared explicitly so it
+      // keeps the wrapped compiler as argv[1].
+      core.exportVariable("CC_KNOWN_WRAPPER_CUSTOM", "kache");
+      core.info("C/C++ caching enabled via CC and CXX");
     }
 
     // Max local store size before LRU eviction (applies regardless of backend)

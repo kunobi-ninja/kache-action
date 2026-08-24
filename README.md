@@ -12,7 +12,7 @@ GitHub Action for [kache](https://github.com/kunobi-ninja/kache) — a content-a
 - **Background daemon** — handles async S3 uploads, remote checks, and manifest-driven warm prefetch of expensive artifacts.
 - **LRU eviction** — the local store is capped (`KACHE_MAX_SIZE`, default 50GiB) and evicts least-recently-used entries.
 
-Installs kache, sets it as `RUSTC_WRAPPER`, and persists the cache between runs. Works out of the box with GitHub's built-in cache, or with any S3-compatible backend.
+Installs kache, sets it as `RUSTC_WRAPPER`, and persists the cache between runs. Supported C/C++ object compiles can also be cached with an opt-in setting. Works out of the box with GitHub's built-in cache, or with any S3-compatible backend.
 
 ## Usage
 
@@ -44,6 +44,20 @@ For non-AWS providers, set `s3-endpoint`:
     s3-access-key-id: ${{ secrets.S3_ACCESS_KEY_ID }}
     s3-secret-access-key: ${{ secrets.S3_SECRET_ACCESS_KEY }}
 ```
+
+### C/C++ object caching
+
+Enable the C/C++ compiler wrappers explicitly:
+
+```yaml
+- uses: kunobi-ninja/kache-action@v1
+  with:
+    cache-c-cpp: true
+```
+
+On Linux and macOS this exports `CC="kache cc"` and `CXX="kache c++"`. On Windows both use `kache clang-cl`. If `CC` or `CXX` is already set at the job level, that compiler is preserved and wrapped instead. The action also sets `CC_KNOWN_WRAPPER_CUSTOM=kache` so Cargo build scripts using the Rust `cc` crate recognize the wrapper.
+
+Kache conservatively caches supported single-source object compiles. Unsupported shapes pass through to the real compiler. C/C++ artifacts currently stay in the local Kache store: GitHub Actions cache can persist that store between jobs, but Kache does not upload C/C++ artifacts to S3 yet.
 
 ### Full example
 
@@ -108,6 +122,7 @@ With GitHub Actions cache, restore still runs but the post-step save is skipped.
 | `s3-access-key-id` | — | S3 access key ID |
 | `s3-secret-access-key` | — | S3 secret access key |
 | `cache-executables` | `false` | Also cache bin/dylib/proc-macro outputs |
+| `cache-c-cpp` | `false` | Wrap `CC`/`CXX` to cache supported C/C++ object compiles. Uses `cc`/`c++` on Unix and `clang-cl` on Windows. |
 | `github-cache` | `true` | Use GitHub Actions cache for the local store when S3 is not configured |
 | `save-cache` | `true` | Save cache changes after the build. Set to `false` for restore-only jobs; with S3 this also disables remote uploads. |
 | `cache-key-prefix` | `kache` | Prefix for the GitHub Actions cache key |
@@ -138,7 +153,7 @@ Both make the daemon's warm prefetch *selective* (pull the expensive artifacts, 
 
 **Setup step** (runs before your build):
 1. Downloads the kache binary from [GitHub Releases](https://github.com/kunobi-ninja/kache/releases) and verifies its SHA256 checksum
-2. Sets `RUSTC_WRAPPER=kache` and exports the relevant env vars — S3 credentials, `KACHE_VERSION`, `KACHE_MAX_SIZE`, and (for S3) the manifest/warm config (`KACHE_MANIFEST_KEY`, `KACHE_NAMESPACE`, `KACHE_MIN_COMPILE_MS`)
+2. Sets `RUSTC_WRAPPER=kache` and exports the relevant env vars — optional C/C++ wrappers, S3 credentials, `KACHE_VERSION`, `KACHE_MAX_SIZE`, and (for S3) the manifest/warm config (`KACHE_MANIFEST_KEY`, `KACHE_NAMESPACE`, `KACHE_MIN_COMPILE_MS`)
 3. Restores the cache:
    - **S3** — starts the kache daemon, which warm-prefetches expensive artifacts from the build manifest (and from per-dependency shards when `namespace` is set). With `sync: true` it instead (or additionally) pulls the entire remote cache up front via `kache sync --pull`.
    - **GitHub** — restores the local store via `@actions/cache`.
