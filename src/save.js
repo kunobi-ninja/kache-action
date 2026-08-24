@@ -8,6 +8,7 @@ const {
   postOrUpdateComment,
   jobLabel,
   labelHeading,
+  labelCurrentJobWindow,
 } = require("./utils");
 
 async function run() {
@@ -51,7 +52,7 @@ async function run() {
     try {
       const md = await runKache(["report", "--format", "github", "--since", "24h"]);
       if (md && md.trim() && md.includes(REPORT_HEADING)) {
-        reportMarkdown = md.trim();
+        reportMarkdown = labelCurrentJobWindow(md.trim());
       }
     } catch {
       // Older kache without report/github format — fall back to legacy

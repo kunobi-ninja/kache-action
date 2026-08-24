@@ -78567,6 +78567,17 @@ function labelHeading(markdown, label) {
   return markdown.replace(re, `$1 — ${label}$2`);
 }
 
+/** The action clears Kache's event and transfer logs immediately before the
+ * build, so the report rows describe this job even though Kache's generic CLI
+ * labels the maximum lookback as "last 24h". Keep the persistent-store section
+ * as a snapshot, but make the event window truthful for Actions consumers. */
+function labelCurrentJobWindow(markdown) {
+  return markdown.replace(
+    /^(\|\s*Window\s*\|\s*)last 24h(\s*\|)$/m,
+    "$1current job$2"
+  );
+}
+
 /** Check if caching is disabled via [no-cache] in the PR description */
 function isNoCacheRequested() {
   const context = github.context;
@@ -78611,6 +78622,7 @@ module.exports = {
   jobLabel,
   commentMarker,
   labelHeading,
+  labelCurrentJobWindow,
 };
 
 
@@ -120616,6 +120628,7 @@ const {
   postOrUpdateComment,
   jobLabel,
   labelHeading,
+  labelCurrentJobWindow,
 } = __nccwpck_require__(95804);
 
 async function run() {
@@ -120659,7 +120672,7 @@ async function run() {
     try {
       const md = await runKache(["report", "--format", "github", "--since", "24h"]);
       if (md && md.trim() && md.includes(REPORT_HEADING)) {
-        reportMarkdown = md.trim();
+        reportMarkdown = labelCurrentJobWindow(md.trim());
       }
     } catch {
       // Older kache without report/github format — fall back to legacy
