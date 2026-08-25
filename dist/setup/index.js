@@ -78672,6 +78672,80 @@ function labelCurrentJobWindow(markdown) {
   );
 }
 
+/** Quote a value as a TOML basic string. JSON string escaping emits only
+ *  escapes (\" \\ \n \t \uXXXX) that are also valid in TOML basic strings. */
+function tomlString(value) {
+  return JSON.stringify(String(value));
+}
+
+/** Render the action-owned config that carries the S3 remote to the daemon.
+ *  Kache v0.15+ deliberately strips KACHE_S3_* from the daemon it spawns
+ *  (kunobi-ninja/kache#706): a daemon outlives the build that starts it, so an
+ *  inherited remote would depend on which build won the startup race. The
+ *  supported channel is the config file the daemon watches — this renders it.
+ *  Credentials are deliberately absent: the daemon inherits the masked
+ *  credential env vars, and this file must stay safe to persist on shared
+ *  runners. */
+function renderRemoteConfigToml({ bucket, region, prefix, endpoint, readonly }) {
+  const lines = [
+    "# Written by kunobi-ninja/kache-action. The kache daemon does not inherit",
+    "# KACHE_S3_* from the build environment (kunobi-ninja/kache#706), so the",
+    "# remote lives here, in the config file the daemon watches.",
+    "# Credentials stay in masked environment variables, never in this file.",
+  ];
+  if (readonly) {
+    lines.push("[cache]", "remote_readonly = true", "");
+  }
+  lines.push(
+    "[cache.remote]",
+    'type = "s3"',
+    `bucket = ${tomlString(bucket)}`,
+    `region = ${tomlString(region)}`,
+    `prefix = ${tomlString(prefix)}`,
+  );
+  if (endpoint) {
+    lines.push(`endpoint = ${tomlString(endpoint)}`);
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
+/** Deterministic config location tied to the selected store: the cache-dir
+ *  root already holds kache's databases, and a daemon surviving into the next
+ *  job (shared runners, node-cache mode) keeps watching the same file. */
+function remoteConfigPath(cacheDir) {
+  return path.join(cacheDir, "kache-action.toml");
+}
+
+/** Atomically materialize the S3 remote where the daemon will read it, and
+ *  return the path to export as KACHE_CONFIG. Write-then-rename so a daemon
+ *  polling the file never observes a half-written config. */
+function writeRemoteConfig(cacheDir, remote, fsApi = fs) {
+  const target = remoteConfigPath(cacheDir);
+  fsApi.mkdirSync(cacheDir, { recursive: true });
+  const tmp = `${target}.${process.pid}.tmp`;
+  fsApi.writeFileSync(tmp, renderRemoteConfigToml(remote), { mode: 0o600 });
+  fsApi.renameSync(tmp, target);
+  return target;
+}
+
+/** Read the daemon's effective remote from `kache stats` output.
+ *  Returns ok: true (remote active), false (daemon is local-only or
+ *  misconfigured), or null (output not recognized — older kache). */
+function daemonRemoteFromStats(statsOutput) {
+  const match = /^Remote:\s*(.+)$/m.exec(statsOutput || "");
+  if (!match) {
+    return { ok: null, detail: "no Remote line in `kache stats` output" };
+  }
+  const detail = match[1].trim();
+  const ok = !(
+    detail.startsWith("not configured") ||
+    detail.startsWith("MISCONFIGURED") ||
+    detail.startsWith("local-only")
+  );
+  return { ok, detail };
+}
+
 /** Check if caching is disabled via [no-cache] in the PR description */
 function isNoCacheRequested() {
   const context = github.context;
@@ -78716,6 +78790,11 @@ module.exports = {
   buildStatsMarkdown,
   postOrUpdateComment,
   isNoCacheRequested,
+  tomlString,
+  renderRemoteConfigToml,
+  remoteConfigPath,
+  writeRemoteConfig,
+  daemonRemoteFromStats,
   jobLabel,
   commentMarker,
   labelHeading,
@@ -120741,6 +120820,8 @@ const {
   isNoCacheRequested,
   getCppCompilerEnv,
   getCmakeLauncherEnv,
+  writeRemoteConfig,
+  daemonRemoteFromStats,
 } = __nccwpck_require__(95804);
 
 async function run() {
@@ -120952,6 +121033,29 @@ async function run() {
       core.info("Remote cache writes disabled (save-cache: false)");
     }
 
+    // The daemon deliberately does not inherit KACHE_S3_* (kache#706), so an
+    // env-only remote leaves it local-only. Materialize the remote in the
+    // config file the daemon watches, before anything below can start one.
+    // Credentials stay in the masked env vars exported above.
+    if (s3) {
+      if (process.env.KACHE_CONFIG) {
+        core.warning(
+          `KACHE_CONFIG is already set (${process.env.KACHE_CONFIG}); not overriding it. ` +
+            "The daemon only uses the S3 remote if that file declares [cache.remote].",
+        );
+      } else {
+        const configPath = writeRemoteConfig(cacheDir, {
+          bucket: core.getInput("s3-bucket"),
+          region: core.getInput("s3-region") || "us-east-1",
+          prefix: core.getInput("s3-prefix") || "artifacts",
+          endpoint: core.getInput("s3-endpoint") || undefined,
+          readonly: !saveCacheEnabled,
+        });
+        core.exportVariable("KACHE_CONFIG", configPath);
+        core.info(`KACHE_CONFIG=${configPath} ([cache.remote] materialized for the daemon)`);
+      }
+    }
+
     // Local-only caching is useful when multiple steps share the same runner,
     // even when no persistent backend is configured.
     if (!s3 && !ghCache) {
@@ -121002,6 +121106,19 @@ async function run() {
     if (s3) {
       core.info("Starting kache daemon for early prefetch...");
       await runKache(["daemon", "start"]);
+      // A daemon that silently came up local-only is the failure this action
+      // exists to prevent — every compile would be a remote miss. Fail loudly.
+      const remote = daemonRemoteFromStats(await runKache(["stats"]));
+      if (remote.ok === false) {
+        throw new Error(
+          `kache daemon is running without the configured S3 remote (${remote.detail}); ` +
+            "refusing to continue with a silently cold cache",
+        );
+      } else if (remote.ok === null) {
+        core.warning(`Could not verify the daemon's effective remote: ${remote.detail}`);
+      } else {
+        core.info(`Daemon remote verified: ${remote.detail}`);
+      }
     }
 
     // Save state for post step
