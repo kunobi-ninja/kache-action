@@ -55,7 +55,19 @@ Enable the C/C++ compiler wrappers explicitly:
     cache-c-cpp: true
 ```
 
-On Linux and macOS this exports `CC="kache cc"` and `CXX="kache c++"`. On Windows both use `kache clang-cl`. If `CC` or `CXX` is already set at the job level, that compiler is preserved and wrapped instead. The action also sets `CC_KNOWN_WRAPPER_CUSTOM=kache` so Cargo build scripts using the Rust `cc` crate recognize the wrapper.
+On Linux and macOS nothing is exported. The Rust `cc` crate already recognizes kache as a compiler wrapper through `RUSTC_WRAPPER` (cc 1.2.66 and newer), and applies it to whatever compiler it selects, so cross-compiled targets keep their own toolchain and still compile through the cache.
+
+On Windows the action sets `CC_<host-triple>` and `CXX_<host-triple>` to `kache clang-cl`, because without an explicit compiler `cc` selects MSVC `cl.exe`, which kache does not support. Scoping those to the runner's own triple leaves other targets to `cc`.
+
+If `CC` or `CXX` is already set at the job level, that compiler is preserved and wrapped as-is, along with `CC_KNOWN_WRAPPER_CUSTOM=kache` so build scripts keep the wrapped compiler as `argv[1]`. Note that a bare `CC` applies to every target: set `CC_<target>` instead if the job cross-compiles.
+
+Builds driven by cmake, make, or autotools read `CC`/`CXX` rather than going through the `cc` crate, so they need those set explicitly:
+
+```yaml
+env:
+  CC: kache cc
+  CXX: kache c++
+```
 
 Kache conservatively caches supported single-source object compiles. Unsupported shapes pass through to the real compiler. C/C++ artifacts currently stay in the local Kache store: GitHub Actions cache can persist that store between jobs, but Kache does not upload C/C++ artifacts to S3 yet.
 
@@ -159,7 +171,7 @@ keeping ordinary S3/v3 behavior. Trust-policy violations still fail closed.
 | `s3-access-key-id` | — | S3 access key ID |
 | `s3-secret-access-key` | — | S3 secret access key |
 | `cache-executables` | `false` | Also cache bin/dylib/proc-macro outputs |
-| `cache-c-cpp` | `false` | Wrap `CC`/`CXX` to cache supported C/C++ object compiles. Uses `cc`/`c++` on Unix and `clang-cl` on Windows. |
+| `cache-c-cpp` | `false` | Cache supported C/C++ object compiles. Rides on `RUSTC_WRAPPER` via the `cc` crate on Unix; sets `CC_<host-triple>` to `kache clang-cl` on Windows. |
 | `github-cache` | `true` | Use GitHub Actions cache for the local store when S3 is not configured |
 | `cache-dir` | native kache cache directory | Local kache store directory. Use `${{ runner.temp }}/kache` to colocate it with the runner workspace. |
 | `node-cache` | `false` | Reuse `cache-dir` as a trusted node-local store across ephemeral jobs. Requires a runner mount trust boundary and disables GitHub Actions cache persistence. |

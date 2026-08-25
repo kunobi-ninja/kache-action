@@ -77997,7 +77997,8 @@ function getTargetFor(platform, arch) {
   if (platform === "darwin" && arch === "x64") return "x86_64-apple-darwin";
   if (platform === "darwin" && arch === "arm64") return "aarch64-apple-darwin";
   if (platform === "win32" && arch === "x64") return "x86_64-pc-windows-msvc";
-  if (platform === "win32" && arch === "arm64") return "aarch64-pc-windows-msvc";
+  if (platform === "win32" && arch === "arm64")
+    return "aarch64-pc-windows-msvc";
 
   throw new Error(`Unsupported platform: ${platform}-${arch}`);
 }
@@ -78043,7 +78044,7 @@ function verifyChecksum(buffer, shaFileContents, name) {
   const actualHash = crypto.createHash("sha256").update(buffer).digest("hex");
   if (actualHash !== expectedHash) {
     throw new Error(
-      `SHA256 mismatch for ${name}: expected ${expectedHash}, got ${actualHash}`
+      `SHA256 mismatch for ${name}: expected ${expectedHash}, got ${actualHash}`,
     );
   }
   return actualHash;
@@ -78072,7 +78073,7 @@ async function downloadAndVerify(version, target) {
   verifyChecksum(
     fs.readFileSync(archivePath),
     fs.readFileSync(shaPath, "utf8"),
-    archiveName
+    archiveName,
   );
   core.info("Checksum verified");
 
@@ -78138,12 +78139,52 @@ function wrapCppCompiler(command, fallback) {
   return `kache ${compiler}`;
 }
 
-/** Resolve the CC/CXX commands exported by the opt-in C/C++ cache mode. */
-function getCppCompilerEnv(platform, env = process.env) {
-  const windows = platform === "win32";
+/** The runner's own Rust target triple, used to scope CC_<triple> so a
+ *  wrapper never displaces cc-rs's compiler choice for any other target. */
+function hostTargetTriple(platform, arch) {
+  const cpu = arch === "arm64" ? "aarch64" : "x86_64";
+  if (platform === "win32") return `${cpu}-pc-windows-msvc`;
+  if (platform === "darwin") return `${cpu}-apple-darwin`;
+  return `${cpu}-unknown-linux-gnu`;
+}
+
+/** Resolve the environment exported by the opt-in C/C++ cache mode.
+ *
+ *  A bare CC applies to EVERY target, so it replaces the cross compiler
+ *  cc-rs would have picked with the host one, and the build fails on the
+ *  first target-specific flag (kunobi-ninja/kache#823). Nothing here may
+ *  set a bare CC unless the user set one first.
+ *
+ *  On Unix nothing needs setting at all: cc-rs recognises kache in its
+ *  RUSTC_WRAPPER accelerator list (cc >= 1.2.66) and applies it as the
+ *  compiler wrapper AFTER choosing the compiler, so cross targets keep
+ *  their own toolchain and still compile through kache.
+ *
+ *  Windows is the exception: without CC, cc-rs selects MSVC `cl.exe`,
+ *  which kache does not support. It stays explicit there, scoped to the
+ *  runner's own triple so other targets are left alone. */
+function getCppCompilerEnv(platform, env = process.env, arch = os.arch()) {
+  const explicitCc = (env.CC || "").trim();
+  const explicitCxx = (env.CXX || "").trim();
+
+  // An explicitly configured compiler is the user's choice of toolchain,
+  // including which target it builds for. Wrap it where it stands.
+  if (explicitCc || explicitCxx) {
+    const windows = platform === "win32";
+    return {
+      CC: wrapCppCompiler(explicitCc, windows ? "clang-cl" : "cc"),
+      CXX: wrapCppCompiler(explicitCxx, windows ? "clang-cl" : "c++"),
+      CC_KNOWN_WRAPPER_CUSTOM: "kache",
+    };
+  }
+
+  if (platform !== "win32") return {};
+
+  const triple = hostTargetTriple(platform, arch).replace(/-/g, "_");
   return {
-    CC: wrapCppCompiler(env.CC, windows ? "clang-cl" : "cc"),
-    CXX: wrapCppCompiler(env.CXX, windows ? "clang-cl" : "c++"),
+    [`CC_${triple}`]: "kache clang-cl",
+    [`CXX_${triple}`]: "kache clang-cl",
+    CC_KNOWN_WRAPPER_CUSTOM: "kache",
   };
 }
 
@@ -78159,7 +78200,7 @@ function getCacheDirFor(platform, env, home) {
   if (platform === "win32")
     return path.join(
       env.LOCALAPPDATA || path.join(home, "AppData", "Local"),
-      "kache"
+      "kache",
     );
   return path.join(home, ".cache", "kache");
 }
@@ -78183,7 +78224,7 @@ const NODE_CACHE_MIN_FREE_BYTES = 10 * 1024 * 1024 * 1024;
 function checkNodeCacheStore(cacheDir, fsApi = __nccwpck_require__(79896)) {
   const probe = path.join(
     cacheDir,
-    `.kache-action-probe-${process.pid}-${Date.now()}`
+    `.kache-action-probe-${process.pid}-${Date.now()}`,
   );
   try {
     fsApi.mkdirSync(cacheDir, { recursive: true });
@@ -78228,7 +78269,9 @@ function getRuntimeDir() {
   const runnerTemp = process.env.RUNNER_TEMP;
   if (!runnerTemp) {
     if (isNodeCacheEnabled()) {
-      throw new Error("node-cache requires RUNNER_TEMP or an explicit runtime-dir");
+      throw new Error(
+        "node-cache requires RUNNER_TEMP or an explicit runtime-dir",
+      );
     }
     return "";
   }
@@ -78344,7 +78387,10 @@ function clearEventLog() {
 
 /** Clear the transfer log so we only capture this run's transfers */
 function clearTransferLog() {
-  const logPath = path.join(getRuntimeDir() || getCacheDir(), "transfers.jsonl");
+  const logPath = path.join(
+    getRuntimeDir() || getCacheDir(),
+    "transfers.jsonl",
+  );
   try {
     fs.writeFileSync(logPath, "");
     core.info("Cleared kache transfer log");
@@ -78471,7 +78517,7 @@ function buildStatsMarkdown(stats, backend, duration) {
       for (const c of top) {
         const key = c.cache_key ? `\`${c.cache_key.slice(0, 12)}\` ` : "";
         lines.push(
-          `| \`${c.name}\` | ${formatMs(c.elapsed_ms)} | ${formatBytes(c.size)} | ${key}|`
+          `| \`${c.name}\` | ${formatMs(c.elapsed_ms)} | ${formatBytes(c.size)} | ${key}|`,
         );
       }
     } else {
@@ -78479,16 +78525,14 @@ function buildStatsMarkdown(stats, backend, duration) {
       lines.push("|-------|-------------|------|");
       for (const c of top) {
         lines.push(
-          `| \`${c.name}\` | ${formatMs(c.elapsed_ms)} | ${formatBytes(c.size)} |`
+          `| \`${c.name}\` | ${formatMs(c.elapsed_ms)} | ${formatBytes(c.size)} |`,
         );
       }
     }
     if (stats.missedCrates.length > 10) {
       const cols = hasKeys ? 4 : 3;
       const empties = "| ".repeat(cols - 1);
-      lines.push(
-        `| *... ${stats.missedCrates.length - 10} more* ${empties}|`
-      );
+      lines.push(`| *... ${stats.missedCrates.length - 10} more* ${empties}|`);
     }
     lines.push("");
     lines.push("</details>");
@@ -78526,8 +78570,7 @@ async function postOrUpdateComment(body, token) {
 
   // Only post on pull requests
   const prNumber =
-    context.payload.pull_request?.number ||
-    context.issue?.number;
+    context.payload.pull_request?.number || context.issue?.number;
   if (!prNumber) {
     core.info("Not a PR context, skipping comment");
     return;
@@ -78545,9 +78588,7 @@ async function postOrUpdateComment(body, token) {
     per_page: 100,
   });
 
-  const existing = comments.find(
-    (c) => c.body && c.body.includes(marker)
-  );
+  const existing = comments.find((c) => c.body && c.body.includes(marker));
 
   if (existing) {
     await octokit.rest.issues.updateComment({
@@ -78583,7 +78624,7 @@ function labelHeading(markdown, label) {
 function labelCurrentJobWindow(markdown) {
   return markdown.replace(
     /^(\|\s*Window\s*\|\s*)last 24h(\s*\|)$/m,
-    "$1current job$2"
+    "$1current job$2",
   );
 }
 
@@ -78610,6 +78651,7 @@ module.exports = {
   isForkPullRequest,
   wrapCppCompiler,
   getCppCompilerEnv,
+  hostTargetTriple,
   getCacheDir,
   getCacheDirFor,
   checkNodeCacheStore,
@@ -120674,7 +120716,9 @@ async function run() {
       version = await getLatestVersion(token);
     }
     if (!version) {
-      core.warning("No kache release found — skipping cache setup (bootstrapping mode)");
+      core.warning(
+        "No kache release found — skipping cache setup (bootstrapping mode)",
+      );
       return;
     }
     if (!version.startsWith("v")) version = `v${version}`;
@@ -120690,7 +120734,9 @@ async function run() {
       try {
         archivePath = await downloadAndVerify(version, target);
       } catch (err) {
-        core.warning(`Failed to download kache ${version} — skipping cache setup (binary not yet available): ${err.message}`);
+        core.warning(
+          `Failed to download kache ${version} — skipping cache setup (binary not yet available): ${err.message}`,
+        );
         return;
       }
       // Windows releases ship as .zip, every other platform as .tar.gz.
@@ -120725,13 +120771,19 @@ async function run() {
     // do not cross filesystem boundaries.
     let cacheDir = getCacheDir();
     let nodeCache = isNodeCacheEnabled();
-    if (nodeCache && !core.getInput("cache-dir") && !process.env.KACHE_CACHE_DIR) {
+    if (
+      nodeCache &&
+      !core.getInput("cache-dir") &&
+      !process.env.KACHE_CACHE_DIR
+    ) {
       throw new Error(
-        "node-cache requires an explicit cache-dir mounted only into the trusted runner pool"
+        "node-cache requires an explicit cache-dir mounted only into the trusted runner pool",
       );
     }
     if (nodeCache && os.platform() !== "linux") {
-      throw new Error("node-cache currently supports Linux ephemeral runners only");
+      throw new Error(
+        "node-cache currently supports Linux ephemeral runners only",
+      );
     }
     if (nodeCache && isForkPullRequest()) {
       throw new Error("node-cache is forbidden for pull requests from forks");
@@ -120742,7 +120794,9 @@ async function run() {
     const runtimeDir = getRuntimeDir();
     if (runtimeDir) {
       if (nodeCache && path.resolve(runtimeDir) === path.resolve(cacheDir)) {
-        throw new Error("runtime-dir must differ from cache-dir in node-cache mode");
+        throw new Error(
+          "runtime-dir must differ from cache-dir in node-cache mode",
+        );
       }
       core.exportVariable("KACHE_RUNTIME_DIR", runtimeDir);
       core.info(`KACHE_RUNTIME_DIR=${runtimeDir}`);
@@ -120755,7 +120809,7 @@ async function run() {
     if (nodeCache) {
       if (process.env.KACHE_SOCKET_PATH) {
         throw new Error(
-          "node-cache does not accept KACHE_SOCKET_PATH because it would mask the runtime-directory compatibility check"
+          "node-cache does not accept KACHE_SOCKET_PATH because it would mask the runtime-directory compatibility check",
         );
       }
       const health = checkNodeCacheStore(cacheDir);
@@ -120766,14 +120820,14 @@ async function run() {
         cacheDir = nodeCacheFallbackDir();
         nodeCache = false;
         core.warning(
-          `Trusted node-local cache unavailable (${reason}); falling back to job-local cache with ordinary remote v3 behavior`
+          `Trusted node-local cache unavailable (${reason}); falling back to job-local cache with ordinary remote v3 behavior`,
         );
         core.exportVariable("KACHE_CACHE_DIR", cacheDir);
         core.exportVariable("KACHE_EFFECTIVE_CACHE_DIR", cacheDir);
         core.info(`KACHE_CACHE_DIR=${cacheDir}`);
       } else {
         core.info(
-          "Trusted node-local cache enabled; GitHub Actions cache restore/save is disabled"
+          "Trusted node-local cache enabled; GitHub Actions cache restore/save is disabled",
         );
       }
     }
@@ -120811,12 +120865,17 @@ async function run() {
     // compiler and otherwise use kache's supported platform defaults.
     if (core.getBooleanInput("cache-c-cpp")) {
       const compilerEnv = getCppCompilerEnv(os.platform(), process.env);
-      core.exportVariable("CC", compilerEnv.CC);
-      core.exportVariable("CXX", compilerEnv.CXX);
-      // The Rust `cc` crate needs custom wrappers declared explicitly so it
-      // keeps the wrapped compiler as argv[1].
-      core.exportVariable("CC_KNOWN_WRAPPER_CUSTOM", "kache");
-      core.info("C/C++ caching enabled via CC and CXX");
+      for (const [name, value] of Object.entries(compilerEnv)) {
+        core.exportVariable(name, value);
+      }
+      const exported = Object.keys(compilerEnv).filter(
+        (n) => n !== "CC_KNOWN_WRAPPER_CUSTOM",
+      );
+      core.info(
+        exported.length
+          ? `C/C++ caching enabled via ${exported.join(", ")}`
+          : "C/C++ caching enabled via RUSTC_WRAPPER (the cc crate wraps the compiler it selects, cross targets included)",
+      );
     }
 
     // Max local store size before LRU eviction (applies regardless of backend)
@@ -120832,7 +120891,7 @@ async function run() {
     const saveCacheEnabled = core.getBooleanInput("save-cache");
     if (s3 && hasUnsafeEnvOnlyDaemonVersion(version) && !runtimeSupported) {
       throw new Error(
-        "Kache 0.15.0 cannot safely inherit an environment-only S3 remote in its background daemon; use Kache 0.15.1 or newer"
+        "Kache 0.15.0 cannot safely inherit an environment-only S3 remote in its background daemon; use Kache 0.15.1 or newer",
       );
     }
     core.saveState("stop-daemon", s3 && runtimeDir ? "true" : "false");
@@ -120848,15 +120907,15 @@ async function run() {
     // even when no persistent backend is configured.
     if (!s3 && !ghCache) {
       core.info(
-        "No persistent cache backend configured — using the local kache store only"
+        "No persistent cache backend configured — using the local kache store only",
       );
     }
     if (!s3 && ghCache) {
       core.warning(
         "kache: no S3 remote configured — falling back to GitHub Actions cache. " +
-        "This provides basic caching but S3/R2 is recommended for best performance " +
-        "(faster restore, async uploads, cross-branch sharing). " +
-        "See: https://github.com/kunobi-ninja/kache#remote-cache"
+          "This provides basic caching but S3/R2 is recommended for best performance " +
+          "(faster restore, async uploads, cross-branch sharing). " +
+          "See: https://github.com/kunobi-ninja/kache#remote-cache",
       );
     }
 
@@ -120872,7 +120931,8 @@ async function run() {
       const namespace = core.getInput("namespace") || manifestKey;
       if (namespace) core.exportVariable("KACHE_NAMESPACE", namespace);
       const minMs = core.getInput("min-compile-ms");
-      if (minMs && minMs !== "1000") core.exportVariable("KACHE_MIN_COMPILE_MS", minMs);
+      if (minMs && minMs !== "1000")
+        core.exportVariable("KACHE_MIN_COMPILE_MS", minMs);
       const warm = core.getInput("warm") !== "false";
       if (!warm) core.exportVariable("KACHE_MIN_COMPILE_MS", "999999999");
     }
