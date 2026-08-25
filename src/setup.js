@@ -24,6 +24,9 @@ const {
   isNoCacheRequested,
   getCppCompilerEnv,
   getCmakeLauncherEnv,
+  writeRemoteConfig,
+  expectedRemoteDescription,
+  daemonRemoteFromStats,
 } = require("./utils");
 
 async function run() {
@@ -235,6 +238,33 @@ async function run() {
       core.info("Remote cache writes disabled (save-cache: false)");
     }
 
+    // The daemon deliberately does not inherit KACHE_S3_* (kache#706), so an
+    // env-only remote leaves it local-only. Materialize the remote in the
+    // config file the daemon watches, before anything below can start one.
+    // Credentials stay in the masked env vars exported above.
+    const s3Remote = s3
+      ? {
+          bucket: core.getInput("s3-bucket"),
+          region: core.getInput("s3-region") || "us-east-1",
+          prefix: core.getInput("s3-prefix") || "artifacts",
+          endpoint: core.getInput("s3-endpoint") || undefined,
+          readonly: !saveCacheEnabled,
+        }
+      : null;
+    if (s3) {
+      if (process.env.KACHE_CONFIG) {
+        core.warning(
+          `KACHE_CONFIG is already set (${process.env.KACHE_CONFIG}); not overriding it. ` +
+            "The daemon only uses the S3 remote if that file declares [cache.remote]; " +
+            "the verification below fails the job if the daemon's remote diverges from the s3-* inputs.",
+        );
+      } else {
+        const configPath = writeRemoteConfig(cacheDir, s3Remote);
+        core.exportVariable("KACHE_CONFIG", configPath);
+        core.info(`KACHE_CONFIG=${configPath} ([cache.remote] materialized for the daemon)`);
+      }
+    }
+
     // Local-only caching is useful when multiple steps share the same runner,
     // even when no persistent backend is configured.
     if (!s3 && !ghCache) {
@@ -285,6 +315,27 @@ async function run() {
     if (s3) {
       core.info("Starting kache daemon for early prefetch...");
       await runKache(["daemon", "start"]);
+      // A daemon that silently came up local-only is the failure this action
+      // exists to prevent — every compile would be a remote miss. A surviving
+      // daemon may still be reloading the config it watches, so give it a few
+      // polls before concluding it really lacks our remote. Fail loudly then.
+      const expected = expectedRemoteDescription(s3Remote);
+      let remote;
+      for (let attempt = 0; ; attempt++) {
+        remote = daemonRemoteFromStats(await runKache(["stats"]), expected);
+        if (remote.ok !== false || attempt >= 2) break;
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      if (remote.ok === false) {
+        throw new Error(
+          `kache daemon is running without the configured S3 remote (${remote.detail}); ` +
+            "refusing to continue with a silently cold cache",
+        );
+      } else if (remote.ok === null) {
+        core.warning(`Could not verify the daemon's effective remote: ${remote.detail}`);
+      } else {
+        core.info(`Daemon remote verified: ${remote.detail}`);
+      }
     }
 
     // Save state for post step

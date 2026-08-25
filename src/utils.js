@@ -700,6 +700,114 @@ function labelCurrentJobWindow(markdown) {
   );
 }
 
+/** Quote a value as a TOML basic string. JSON string escaping emits only
+ *  escapes (\" \\ \n \t \uXXXX) that are also valid in TOML basic strings. */
+function tomlString(value) {
+  return JSON.stringify(String(value));
+}
+
+/** Render the action-owned config that carries the S3 remote to the daemon.
+ *  Kache v0.15+ deliberately strips KACHE_S3_* from the daemon it spawns
+ *  (kunobi-ninja/kache#706): a daemon outlives the build that starts it, so an
+ *  inherited remote would depend on which build won the startup race. The
+ *  supported channel is the config file the daemon watches — this renders it.
+ *  Credentials are deliberately absent: the daemon inherits the masked
+ *  credential env vars, and this file must stay safe to persist on shared
+ *  runners. */
+function renderRemoteConfigToml({ bucket, region, prefix, endpoint, readonly }) {
+  const lines = [
+    "# Written by kunobi-ninja/kache-action. The kache daemon does not inherit",
+    "# KACHE_S3_* from the build environment (kunobi-ninja/kache#706), so the",
+    "# remote lives here, in the config file the daemon watches.",
+    "# Credentials stay in masked environment variables, never in this file.",
+  ];
+  if (readonly) {
+    lines.push("[cache]", "remote_readonly = true", "");
+  }
+  lines.push(
+    "[cache.remote]",
+    'type = "s3"',
+    `bucket = ${tomlString(bucket)}`,
+    `region = ${tomlString(region)}`,
+    `prefix = ${tomlString(prefix)}`,
+  );
+  if (endpoint) {
+    lines.push(`endpoint = ${tomlString(endpoint)}`);
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
+/** Deterministic config location tied to the selected store: the cache-dir
+ *  root already holds kache's databases, and a daemon surviving into the next
+ *  job (shared runners, node-cache mode) keeps watching the same file. */
+function remoteConfigPath(cacheDir) {
+  return path.join(cacheDir, "kache-action.toml");
+}
+
+/** Atomically materialize the S3 remote where the daemon will read it, and
+ *  return the path to export as KACHE_CONFIG. Write-then-rename so a daemon
+ *  polling the file never observes a half-written config; an identical
+ *  existing file is left untouched so concurrent jobs sharing a store don't
+ *  churn the daemon's config watcher. The temp name carries random bytes, not
+ *  just a PID — PIDs collide across containers sharing a mounted store. */
+function writeRemoteConfig(cacheDir, remote, fsApi = fs) {
+  const target = remoteConfigPath(cacheDir);
+  const content = renderRemoteConfigToml(remote);
+  fsApi.mkdirSync(cacheDir, { recursive: true });
+  try {
+    if (fsApi.readFileSync(target, "utf8") === content) return target;
+  } catch {
+    // Missing or unreadable: fall through to the write.
+  }
+  const tmp = `${target}.${crypto.randomBytes(6).toString("hex")}.tmp`;
+  fsApi.writeFileSync(tmp, content, { mode: 0o600 });
+  fsApi.renameSync(tmp, target);
+  return target;
+}
+
+/** The `Remote:` line kache renders for an S3 remote — `describe()` in
+ *  src/config.rs — used to check the daemon picked up OUR remote, not merely
+ *  some remote (a stale KACHE_CONFIG could point anywhere). */
+function expectedRemoteDescription({ bucket, prefix }) {
+  return prefix ? `s3://${bucket}/${prefix}` : `s3://${bucket}`;
+}
+
+/** Read the daemon's effective remote from `kache stats` output.
+ *  Returns ok: true (the expected remote is active), false (daemon offline,
+ *  local-only, misconfigured, or on a different remote), or null (output not
+ *  recognized or daemon didn't report its state — older kache; warn only). */
+function daemonRemoteFromStats(statsOutput, expectedRemote) {
+  const text = statsOutput || "";
+  if (/^Daemon:\s*offline/m.test(text)) {
+    return { ok: false, detail: "daemon offline" };
+  }
+  const match = /^Remote:\s*(.+)$/m.exec(text);
+  if (!match) {
+    return { ok: null, detail: "no Remote line in `kache stats` output" };
+  }
+  const detail = match[1].trim();
+  if (detail.includes("[client config")) {
+    // Older daemon that doesn't report effective config: the line reflects
+    // this process, not the daemon, so nothing is proven either way.
+    return { ok: null, detail };
+  }
+  if (
+    detail.startsWith("not configured") ||
+    detail.startsWith("MISCONFIGURED") ||
+    detail.startsWith("local-only")
+  ) {
+    return { ok: false, detail };
+  }
+  if (expectedRemote && detail !== expectedRemote) {
+    return {
+      ok: false,
+      detail: `daemon remote is ${detail}, expected ${expectedRemote}`,
+    };
+  }
+  return { ok: true, detail };
+}
+
 /** Check if caching is disabled via [no-cache] in the PR description */
 function isNoCacheRequested() {
   const context = github.context;
@@ -744,6 +852,12 @@ module.exports = {
   buildStatsMarkdown,
   postOrUpdateComment,
   isNoCacheRequested,
+  tomlString,
+  renderRemoteConfigToml,
+  remoteConfigPath,
+  writeRemoteConfig,
+  expectedRemoteDescription,
+  daemonRemoteFromStats,
   jobLabel,
   commentMarker,
   labelHeading,
