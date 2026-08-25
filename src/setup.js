@@ -23,6 +23,7 @@ const {
   clearTransferLog,
   isNoCacheRequested,
   getCppCompilerEnv,
+  getCmakeLauncherEnv,
 } = require("./utils");
 
 async function run() {
@@ -44,7 +45,9 @@ async function run() {
       version = await getLatestVersion(token);
     }
     if (!version) {
-      core.warning("No kache release found — skipping cache setup (bootstrapping mode)");
+      core.warning(
+        "No kache release found — skipping cache setup (bootstrapping mode)",
+      );
       return;
     }
     if (!version.startsWith("v")) version = `v${version}`;
@@ -60,7 +63,9 @@ async function run() {
       try {
         archivePath = await downloadAndVerify(version, target);
       } catch (err) {
-        core.warning(`Failed to download kache ${version} — skipping cache setup (binary not yet available): ${err.message}`);
+        core.warning(
+          `Failed to download kache ${version} — skipping cache setup (binary not yet available): ${err.message}`,
+        );
         return;
       }
       // Windows releases ship as .zip, every other platform as .tar.gz.
@@ -95,13 +100,19 @@ async function run() {
     // do not cross filesystem boundaries.
     let cacheDir = getCacheDir();
     let nodeCache = isNodeCacheEnabled();
-    if (nodeCache && !core.getInput("cache-dir") && !process.env.KACHE_CACHE_DIR) {
+    if (
+      nodeCache &&
+      !core.getInput("cache-dir") &&
+      !process.env.KACHE_CACHE_DIR
+    ) {
       throw new Error(
-        "node-cache requires an explicit cache-dir mounted only into the trusted runner pool"
+        "node-cache requires an explicit cache-dir mounted only into the trusted runner pool",
       );
     }
     if (nodeCache && os.platform() !== "linux") {
-      throw new Error("node-cache currently supports Linux ephemeral runners only");
+      throw new Error(
+        "node-cache currently supports Linux ephemeral runners only",
+      );
     }
     if (nodeCache && isForkPullRequest()) {
       throw new Error("node-cache is forbidden for pull requests from forks");
@@ -112,7 +123,9 @@ async function run() {
     const runtimeDir = getRuntimeDir();
     if (runtimeDir) {
       if (nodeCache && path.resolve(runtimeDir) === path.resolve(cacheDir)) {
-        throw new Error("runtime-dir must differ from cache-dir in node-cache mode");
+        throw new Error(
+          "runtime-dir must differ from cache-dir in node-cache mode",
+        );
       }
       core.exportVariable("KACHE_RUNTIME_DIR", runtimeDir);
       core.info(`KACHE_RUNTIME_DIR=${runtimeDir}`);
@@ -125,7 +138,7 @@ async function run() {
     if (nodeCache) {
       if (process.env.KACHE_SOCKET_PATH) {
         throw new Error(
-          "node-cache does not accept KACHE_SOCKET_PATH because it would mask the runtime-directory compatibility check"
+          "node-cache does not accept KACHE_SOCKET_PATH because it would mask the runtime-directory compatibility check",
         );
       }
       const health = checkNodeCacheStore(cacheDir);
@@ -136,14 +149,14 @@ async function run() {
         cacheDir = nodeCacheFallbackDir();
         nodeCache = false;
         core.warning(
-          `Trusted node-local cache unavailable (${reason}); falling back to job-local cache with ordinary remote v3 behavior`
+          `Trusted node-local cache unavailable (${reason}); falling back to job-local cache with ordinary remote v3 behavior`,
         );
         core.exportVariable("KACHE_CACHE_DIR", cacheDir);
         core.exportVariable("KACHE_EFFECTIVE_CACHE_DIR", cacheDir);
         core.info(`KACHE_CACHE_DIR=${cacheDir}`);
       } else {
         core.info(
-          "Trusted node-local cache enabled; GitHub Actions cache restore/save is disabled"
+          "Trusted node-local cache enabled; GitHub Actions cache restore/save is disabled",
         );
       }
     }
@@ -180,13 +193,21 @@ async function run() {
     // Opt-in C/C++ object caching. Preserve an explicitly configured real
     // compiler and otherwise use kache's supported platform defaults.
     if (core.getBooleanInput("cache-c-cpp")) {
-      const compilerEnv = getCppCompilerEnv(os.platform(), process.env);
-      core.exportVariable("CC", compilerEnv.CC);
-      core.exportVariable("CXX", compilerEnv.CXX);
-      // The Rust `cc` crate needs custom wrappers declared explicitly so it
-      // keeps the wrapped compiler as argv[1].
-      core.exportVariable("CC_KNOWN_WRAPPER_CUSTOM", "kache");
-      core.info("C/C++ caching enabled via CC and CXX");
+      const compilerEnv = {
+        ...getCppCompilerEnv(os.platform(), process.env),
+        ...getCmakeLauncherEnv(kacheBin, process.env),
+      };
+      for (const [name, value] of Object.entries(compilerEnv)) {
+        core.exportVariable(name, value);
+      }
+      const exported = Object.keys(compilerEnv).filter(
+        (n) => n !== "CC_KNOWN_WRAPPER_CUSTOM",
+      );
+      core.info(
+        exported.length
+          ? `C/C++ caching enabled via ${exported.join(", ")}`
+          : "C/C++ caching enabled via RUSTC_WRAPPER (the cc crate wraps the compiler it selects, cross targets included)",
+      );
     }
 
     // Max local store size before LRU eviction (applies regardless of backend)
@@ -202,7 +223,7 @@ async function run() {
     const saveCacheEnabled = core.getBooleanInput("save-cache");
     if (s3 && hasUnsafeEnvOnlyDaemonVersion(version) && !runtimeSupported) {
       throw new Error(
-        "Kache 0.15.0 cannot safely inherit an environment-only S3 remote in its background daemon; use Kache 0.15.1 or newer"
+        "Kache 0.15.0 cannot safely inherit an environment-only S3 remote in its background daemon; use Kache 0.15.1 or newer",
       );
     }
     core.saveState("stop-daemon", s3 && runtimeDir ? "true" : "false");
@@ -218,15 +239,15 @@ async function run() {
     // even when no persistent backend is configured.
     if (!s3 && !ghCache) {
       core.info(
-        "No persistent cache backend configured — using the local kache store only"
+        "No persistent cache backend configured — using the local kache store only",
       );
     }
     if (!s3 && ghCache) {
       core.warning(
         "kache: no S3 remote configured — falling back to GitHub Actions cache. " +
-        "This provides basic caching but S3/R2 is recommended for best performance " +
-        "(faster restore, async uploads, cross-branch sharing). " +
-        "See: https://github.com/kunobi-ninja/kache#remote-cache"
+          "This provides basic caching but S3/R2 is recommended for best performance " +
+          "(faster restore, async uploads, cross-branch sharing). " +
+          "See: https://github.com/kunobi-ninja/kache#remote-cache",
       );
     }
 
@@ -242,7 +263,8 @@ async function run() {
       const namespace = core.getInput("namespace") || manifestKey;
       if (namespace) core.exportVariable("KACHE_NAMESPACE", namespace);
       const minMs = core.getInput("min-compile-ms");
-      if (minMs && minMs !== "1000") core.exportVariable("KACHE_MIN_COMPILE_MS", minMs);
+      if (minMs && minMs !== "1000")
+        core.exportVariable("KACHE_MIN_COMPILE_MS", minMs);
       const warm = core.getInput("warm") !== "false";
       if (!warm) core.exportVariable("KACHE_MIN_COMPILE_MS", "999999999");
     }

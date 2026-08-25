@@ -77997,7 +77997,8 @@ function getTargetFor(platform, arch) {
   if (platform === "darwin" && arch === "x64") return "x86_64-apple-darwin";
   if (platform === "darwin" && arch === "arm64") return "aarch64-apple-darwin";
   if (platform === "win32" && arch === "x64") return "x86_64-pc-windows-msvc";
-  if (platform === "win32" && arch === "arm64") return "aarch64-pc-windows-msvc";
+  if (platform === "win32" && arch === "arm64")
+    return "aarch64-pc-windows-msvc";
 
   throw new Error(`Unsupported platform: ${platform}-${arch}`);
 }
@@ -78043,7 +78044,7 @@ function verifyChecksum(buffer, shaFileContents, name) {
   const actualHash = crypto.createHash("sha256").update(buffer).digest("hex");
   if (actualHash !== expectedHash) {
     throw new Error(
-      `SHA256 mismatch for ${name}: expected ${expectedHash}, got ${actualHash}`
+      `SHA256 mismatch for ${name}: expected ${expectedHash}, got ${actualHash}`,
     );
   }
   return actualHash;
@@ -78072,7 +78073,7 @@ async function downloadAndVerify(version, target) {
   verifyChecksum(
     fs.readFileSync(archivePath),
     fs.readFileSync(shaPath, "utf8"),
-    archiveName
+    archiveName,
   );
   core.info("Checksum verified");
 
@@ -78131,20 +78132,104 @@ function isForkPullRequest() {
   return Boolean(head && base && head !== base);
 }
 
-/** Prefix a C/C++ compiler command with kache, without double-wrapping. */
+/** Cache/distribution wrappers the `cc` crate recognizes at the head of a
+ *  CC value. A user who put one there has their own caching stack: wrapping
+ *  it again ("kache sccache cc") would stack two caches — leave it alone. */
+const FOREIGN_CC_WRAPPERS =
+  /^(?:ccache|distcc|sccache|icecc|cachepot|buildcache)(?:\.exe)?(?:\s|$)/i;
+
+/** Prefix a C/C++ compiler command with kache, without double-wrapping and
+ *  without stacking onto a foreign cache wrapper. Returns null when the
+ *  value must be left untouched. */
 function wrapCppCompiler(command, fallback) {
   const compiler = (command || "").trim() || fallback;
   if (/^kache(?:\.exe)?(?:\s|$)/i.test(compiler)) return compiler;
+  if (FOREIGN_CC_WRAPPERS.test(compiler)) return null;
   return `kache ${compiler}`;
 }
 
-/** Resolve the CC/CXX commands exported by the opt-in C/C++ cache mode. */
-function getCppCompilerEnv(platform, env = process.env) {
-  const windows = platform === "win32";
-  return {
-    CC: wrapCppCompiler(env.CC, windows ? "clang-cl" : "cc"),
-    CXX: wrapCppCompiler(env.CXX, windows ? "clang-cl" : "c++"),
-  };
+/** The runner's own Rust target triple, used to scope CC_<triple> so a
+ *  wrapper never displaces cc-rs's compiler choice for any other target. */
+function hostTargetTriple(platform, arch) {
+  const cpu = arch === "arm64" ? "aarch64" : "x86_64";
+  if (platform === "win32") return `${cpu}-pc-windows-msvc`;
+  if (platform === "darwin") return `${cpu}-apple-darwin`;
+  return `${cpu}-unknown-linux-gnu`;
+}
+
+/** Resolve the environment exported by the opt-in C/C++ cache mode.
+ *
+ *  A bare CC applies to EVERY target, so it replaces the cross compiler
+ *  cc-rs would have picked with the host one, and the build fails on the
+ *  first target-specific flag (kunobi-ninja/kache#823). Nothing here may
+ *  set a bare CC unless the user set one first.
+ *
+ *  On Unix nothing needs setting at all: cc-rs recognises kache in its
+ *  RUSTC_WRAPPER accelerator list (cc >= 1.2.66) and applies it as the
+ *  compiler wrapper AFTER choosing the compiler, so cross targets keep
+ *  their own toolchain and still compile through kache.
+ *
+ *  Windows is the exception: without CC, cc-rs selects MSVC `cl.exe`,
+ *  which kache does not support. It stays explicit there, scoped to the
+ *  runner's own triple so other targets are left alone. */
+function getCppCompilerEnv(platform, env = process.env, arch = os.arch()) {
+  const explicitCc = (env.CC || "").trim();
+  const explicitCxx = (env.CXX || "").trim();
+
+  // An explicitly configured compiler is the user's choice of toolchain,
+  // including which target it builds for. Wrap it where it stands — and
+  // ONLY the ones the user actually set: fabricating the missing one as a
+  // bare default would reintroduce the cross-target override this function
+  // exists to avoid (kunobi-ninja/kache#823). A value already headed by a
+  // foreign cache wrapper (sccache, ccache, …) is the user's own caching
+  // stack and is left untouched.
+  const out = {};
+  if (explicitCc || explicitCxx) {
+    const cc = explicitCc ? wrapCppCompiler(explicitCc, "cc") : null;
+    const cxx = explicitCxx ? wrapCppCompiler(explicitCxx, "c++") : null;
+    if (cc) out.CC = cc;
+    if (cxx) out.CXX = cxx;
+  } else if (platform === "win32") {
+    // Without an explicit compiler the `cc` crate selects MSVC `cl.exe`,
+    // which kache cannot cache; clang-cl is the supported MSVC-driver
+    // mode. Scoped to the runner's own triple so no other target's
+    // compiler choice is displaced.
+    const triple = hostTargetTriple(platform, arch).replace(/-/g, "_");
+    out[`CC_${triple}`] = "kache clang-cl";
+    out[`CXX_${triple}`] = "kache clang-cl";
+  }
+  // `CC_KNOWN_WRAPPER_CUSTOM` teaches older `cc` versions to split a
+  // "kache <compiler>" value into wrapper + compiler (current versions
+  // know kache natively). It is a single user-owned slot: set it only
+  // when this function actually emitted a kache-prefixed value, and never
+  // over a value the user already put there.
+  const emittedKacheValue = Object.values(out).some((v) =>
+    /^kache(?:\.exe)?\s/i.test(v),
+  );
+  if (emittedKacheValue && !(env.CC_KNOWN_WRAPPER_CUSTOM || "").trim()) {
+    out.CC_KNOWN_WRAPPER_CUSTOM = "kache";
+  }
+  return out;
+}
+
+/** CMake compiler-launcher exports for the opt-in C/C++ cache mode.
+ *
+ *  The `cmake` crate asks `cc` for a Tool but passes only the tool's path as
+ *  CMAKE_<LANG>_COMPILER — the wrapper is dropped, so the RUSTC_WRAPPER
+ *  route never reaches CMake-built dependencies (openssl-sys, zstd-sys, …).
+ *  CMake >= 3.17 initializes these from the environment on first configure;
+ *  the launcher runs `<kache> <compiler> <args>` AFTER CMake's own compiler
+ *  selection, so cross toolchains are untouched. A launcher the user
+ *  already configured (sccache, ccache, an explicitly empty one) wins. */
+function getCmakeLauncherEnv(kacheBin, env = process.env) {
+  const out = {};
+  if (env.CMAKE_C_COMPILER_LAUNCHER === undefined) {
+    out.CMAKE_C_COMPILER_LAUNCHER = kacheBin;
+  }
+  if (env.CMAKE_CXX_COMPILER_LAUNCHER === undefined) {
+    out.CMAKE_CXX_COMPILER_LAUNCHER = kacheBin;
+  }
+  return out;
 }
 
 /** Resolve the kache cache dir for an explicit platform/env/home. Mirrors
@@ -78159,7 +78244,7 @@ function getCacheDirFor(platform, env, home) {
   if (platform === "win32")
     return path.join(
       env.LOCALAPPDATA || path.join(home, "AppData", "Local"),
-      "kache"
+      "kache",
     );
   return path.join(home, ".cache", "kache");
 }
@@ -78183,7 +78268,7 @@ const NODE_CACHE_MIN_FREE_BYTES = 10 * 1024 * 1024 * 1024;
 function checkNodeCacheStore(cacheDir, fsApi = __nccwpck_require__(79896)) {
   const probe = path.join(
     cacheDir,
-    `.kache-action-probe-${process.pid}-${Date.now()}`
+    `.kache-action-probe-${process.pid}-${Date.now()}`,
   );
   try {
     fsApi.mkdirSync(cacheDir, { recursive: true });
@@ -78228,7 +78313,9 @@ function getRuntimeDir() {
   const runnerTemp = process.env.RUNNER_TEMP;
   if (!runnerTemp) {
     if (isNodeCacheEnabled()) {
-      throw new Error("node-cache requires RUNNER_TEMP or an explicit runtime-dir");
+      throw new Error(
+        "node-cache requires RUNNER_TEMP or an explicit runtime-dir",
+      );
     }
     return "";
   }
@@ -78344,7 +78431,10 @@ function clearEventLog() {
 
 /** Clear the transfer log so we only capture this run's transfers */
 function clearTransferLog() {
-  const logPath = path.join(getRuntimeDir() || getCacheDir(), "transfers.jsonl");
+  const logPath = path.join(
+    getRuntimeDir() || getCacheDir(),
+    "transfers.jsonl",
+  );
   try {
     fs.writeFileSync(logPath, "");
     core.info("Cleared kache transfer log");
@@ -78471,7 +78561,7 @@ function buildStatsMarkdown(stats, backend, duration) {
       for (const c of top) {
         const key = c.cache_key ? `\`${c.cache_key.slice(0, 12)}\` ` : "";
         lines.push(
-          `| \`${c.name}\` | ${formatMs(c.elapsed_ms)} | ${formatBytes(c.size)} | ${key}|`
+          `| \`${c.name}\` | ${formatMs(c.elapsed_ms)} | ${formatBytes(c.size)} | ${key}|`,
         );
       }
     } else {
@@ -78479,16 +78569,14 @@ function buildStatsMarkdown(stats, backend, duration) {
       lines.push("|-------|-------------|------|");
       for (const c of top) {
         lines.push(
-          `| \`${c.name}\` | ${formatMs(c.elapsed_ms)} | ${formatBytes(c.size)} |`
+          `| \`${c.name}\` | ${formatMs(c.elapsed_ms)} | ${formatBytes(c.size)} |`,
         );
       }
     }
     if (stats.missedCrates.length > 10) {
       const cols = hasKeys ? 4 : 3;
       const empties = "| ".repeat(cols - 1);
-      lines.push(
-        `| *... ${stats.missedCrates.length - 10} more* ${empties}|`
-      );
+      lines.push(`| *... ${stats.missedCrates.length - 10} more* ${empties}|`);
     }
     lines.push("");
     lines.push("</details>");
@@ -78526,8 +78614,7 @@ async function postOrUpdateComment(body, token) {
 
   // Only post on pull requests
   const prNumber =
-    context.payload.pull_request?.number ||
-    context.issue?.number;
+    context.payload.pull_request?.number || context.issue?.number;
   if (!prNumber) {
     core.info("Not a PR context, skipping comment");
     return;
@@ -78545,9 +78632,7 @@ async function postOrUpdateComment(body, token) {
     per_page: 100,
   });
 
-  const existing = comments.find(
-    (c) => c.body && c.body.includes(marker)
-  );
+  const existing = comments.find((c) => c.body && c.body.includes(marker));
 
   if (existing) {
     await octokit.rest.issues.updateComment({
@@ -78583,7 +78668,7 @@ function labelHeading(markdown, label) {
 function labelCurrentJobWindow(markdown) {
   return markdown.replace(
     /^(\|\s*Window\s*\|\s*)last 24h(\s*\|)$/m,
-    "$1current job$2"
+    "$1current job$2",
   );
 }
 
@@ -78610,6 +78695,8 @@ module.exports = {
   isForkPullRequest,
   wrapCppCompiler,
   getCppCompilerEnv,
+  getCmakeLauncherEnv,
+  hostTargetTriple,
   getCacheDir,
   getCacheDirFor,
   checkNodeCacheStore,
