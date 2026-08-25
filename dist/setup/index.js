@@ -78132,10 +78132,19 @@ function isForkPullRequest() {
   return Boolean(head && base && head !== base);
 }
 
-/** Prefix a C/C++ compiler command with kache, without double-wrapping. */
+/** Cache/distribution wrappers the `cc` crate recognizes at the head of a
+ *  CC value. A user who put one there has their own caching stack: wrapping
+ *  it again ("kache sccache cc") would stack two caches — leave it alone. */
+const FOREIGN_CC_WRAPPERS =
+  /^(?:ccache|distcc|sccache|icecc|cachepot|buildcache)(?:\.exe)?(?:\s|$)/i;
+
+/** Prefix a C/C++ compiler command with kache, without double-wrapping and
+ *  without stacking onto a foreign cache wrapper. Returns null when the
+ *  value must be left untouched. */
 function wrapCppCompiler(command, fallback) {
   const compiler = (command || "").trim() || fallback;
   if (/^kache(?:\.exe)?(?:\s|$)/i.test(compiler)) return compiler;
+  if (FOREIGN_CC_WRAPPERS.test(compiler)) return null;
   return `kache ${compiler}`;
 }
 
@@ -78168,24 +78177,59 @@ function getCppCompilerEnv(platform, env = process.env, arch = os.arch()) {
   const explicitCxx = (env.CXX || "").trim();
 
   // An explicitly configured compiler is the user's choice of toolchain,
-  // including which target it builds for. Wrap it where it stands.
+  // including which target it builds for. Wrap it where it stands — and
+  // ONLY the ones the user actually set: fabricating the missing one as a
+  // bare default would reintroduce the cross-target override this function
+  // exists to avoid (kunobi-ninja/kache#823). A value already headed by a
+  // foreign cache wrapper (sccache, ccache, …) is the user's own caching
+  // stack and is left untouched.
+  const out = {};
   if (explicitCc || explicitCxx) {
-    const windows = platform === "win32";
-    return {
-      CC: wrapCppCompiler(explicitCc, windows ? "clang-cl" : "cc"),
-      CXX: wrapCppCompiler(explicitCxx, windows ? "clang-cl" : "c++"),
-      CC_KNOWN_WRAPPER_CUSTOM: "kache",
-    };
+    const cc = explicitCc ? wrapCppCompiler(explicitCc, "cc") : null;
+    const cxx = explicitCxx ? wrapCppCompiler(explicitCxx, "c++") : null;
+    if (cc) out.CC = cc;
+    if (cxx) out.CXX = cxx;
+  } else if (platform === "win32") {
+    // Without an explicit compiler the `cc` crate selects MSVC `cl.exe`,
+    // which kache cannot cache; clang-cl is the supported MSVC-driver
+    // mode. Scoped to the runner's own triple so no other target's
+    // compiler choice is displaced.
+    const triple = hostTargetTriple(platform, arch).replace(/-/g, "_");
+    out[`CC_${triple}`] = "kache clang-cl";
+    out[`CXX_${triple}`] = "kache clang-cl";
   }
+  // `CC_KNOWN_WRAPPER_CUSTOM` teaches older `cc` versions to split a
+  // "kache <compiler>" value into wrapper + compiler (current versions
+  // know kache natively). It is a single user-owned slot: set it only
+  // when this function actually emitted a kache-prefixed value, and never
+  // over a value the user already put there.
+  const emittedKacheValue = Object.values(out).some((v) =>
+    /^kache(?:\.exe)?\s/i.test(v),
+  );
+  if (emittedKacheValue && !(env.CC_KNOWN_WRAPPER_CUSTOM || "").trim()) {
+    out.CC_KNOWN_WRAPPER_CUSTOM = "kache";
+  }
+  return out;
+}
 
-  if (platform !== "win32") return {};
-
-  const triple = hostTargetTriple(platform, arch).replace(/-/g, "_");
-  return {
-    [`CC_${triple}`]: "kache clang-cl",
-    [`CXX_${triple}`]: "kache clang-cl",
-    CC_KNOWN_WRAPPER_CUSTOM: "kache",
-  };
+/** CMake compiler-launcher exports for the opt-in C/C++ cache mode.
+ *
+ *  The `cmake` crate asks `cc` for a Tool but passes only the tool's path as
+ *  CMAKE_<LANG>_COMPILER — the wrapper is dropped, so the RUSTC_WRAPPER
+ *  route never reaches CMake-built dependencies (openssl-sys, zstd-sys, …).
+ *  CMake >= 3.17 initializes these from the environment on first configure;
+ *  the launcher runs `<kache> <compiler> <args>` AFTER CMake's own compiler
+ *  selection, so cross toolchains are untouched. A launcher the user
+ *  already configured (sccache, ccache, an explicitly empty one) wins. */
+function getCmakeLauncherEnv(kacheBin, env = process.env) {
+  const out = {};
+  if (env.CMAKE_C_COMPILER_LAUNCHER === undefined) {
+    out.CMAKE_C_COMPILER_LAUNCHER = kacheBin;
+  }
+  if (env.CMAKE_CXX_COMPILER_LAUNCHER === undefined) {
+    out.CMAKE_CXX_COMPILER_LAUNCHER = kacheBin;
+  }
+  return out;
 }
 
 /** Resolve the kache cache dir for an explicit platform/env/home. Mirrors
@@ -78651,6 +78695,7 @@ module.exports = {
   isForkPullRequest,
   wrapCppCompiler,
   getCppCompilerEnv,
+  getCmakeLauncherEnv,
   hostTargetTriple,
   getCacheDir,
   getCacheDirFor,
@@ -120695,6 +120740,7 @@ const {
   clearTransferLog,
   isNoCacheRequested,
   getCppCompilerEnv,
+  getCmakeLauncherEnv,
 } = __nccwpck_require__(95804);
 
 async function run() {
@@ -120864,7 +120910,10 @@ async function run() {
     // Opt-in C/C++ object caching. Preserve an explicitly configured real
     // compiler and otherwise use kache's supported platform defaults.
     if (core.getBooleanInput("cache-c-cpp")) {
-      const compilerEnv = getCppCompilerEnv(os.platform(), process.env);
+      const compilerEnv = {
+        ...getCppCompilerEnv(os.platform(), process.env),
+        ...getCmakeLauncherEnv(kacheBin, process.env),
+      };
       for (const [name, value] of Object.entries(compilerEnv)) {
         core.exportVariable(name, value);
       }

@@ -59,9 +59,11 @@ On Linux and macOS nothing is exported. The Rust `cc` crate already recognizes k
 
 On Windows the action sets `CC_<host-triple>` and `CXX_<host-triple>` to `kache clang-cl`, because without an explicit compiler `cc` selects MSVC `cl.exe`, which kache does not support. Scoping those to the runner's own triple leaves other targets to `cc`.
 
-If `CC` or `CXX` is already set at the job level, that compiler is preserved and wrapped as-is, along with `CC_KNOWN_WRAPPER_CUSTOM=kache` so build scripts keep the wrapped compiler as `argv[1]`. Note that a bare `CC` applies to every target: set `CC_<target>` instead if the job cross-compiles.
+If `CC` or `CXX` is already set at the job level, that compiler is preserved and wrapped as-is (a value already headed by another cache wrapper such as `sccache` or `ccache` is left untouched). Note that a bare `CC` applies to every target: set `CC_<target>` instead if the job cross-compiles.
 
-Builds driven by cmake, make, or autotools read `CC`/`CXX` rather than going through the `cc` crate, so they need those set explicitly:
+Dependencies built through the `cmake` crate (openssl-sys, zstd-sys, …) drop the `cc` crate's wrapper, so the action also exports `CMAKE_C_COMPILER_LAUNCHER` and `CMAKE_CXX_COMPILER_LAUNCHER` pointing at kache when they are unset — CMake keeps its own compiler selection and runs kache in front of each compile. A launcher you configured yourself always wins.
+
+Plain make or autotools build scripts read `CC`/`CXX` directly rather than going through the `cc` crate, so they need those set explicitly:
 
 ```yaml
 env:

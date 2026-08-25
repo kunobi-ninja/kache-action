@@ -40,6 +40,22 @@ test("getCppCompilerEnv never sets a bare CC of its own", () => {
   }
 });
 
+test("getCppCompilerEnv wraps only the compilers the user set", () => {
+  // A CXX-only job must not gain a fabricated bare CC: that would
+  // reintroduce the cross-target override of kunobi-ninja/kache#823.
+  assert.deepEqual(
+    utils.getCppCompilerEnv("linux", { CXX: "clang++-18" }, "x64"),
+    { CXX: "kache clang++-18", CC_KNOWN_WRAPPER_CUSTOM: "kache" },
+  );
+  assert.deepEqual(
+    utils.getCppCompilerEnv("linux", { CC: "clang-18" }, "x64"),
+    {
+      CC: "kache clang-18",
+      CC_KNOWN_WRAPPER_CUSTOM: "kache",
+    },
+  );
+});
+
 test("getCppCompilerEnv preserves explicitly selected compilers", () => {
   // A compiler the user configured is their choice of toolchain, target
   // included, so it is wrapped where it stands rather than second-guessed.
@@ -81,5 +97,57 @@ test("wrapCppCompiler does not double-wrap kache commands", () => {
   assert.equal(
     utils.wrapCppCompiler("KACHE.EXE clang-cl", "clang-cl"),
     "KACHE.EXE clang-cl",
+  );
+});
+
+test("getCppCompilerEnv leaves a foreign cache wrapper stack alone", () => {
+  // CC="sccache cc" is the user's own caching stack; "kache sccache cc"
+  // would stack two caches. Export nothing for that variable.
+  assert.deepEqual(
+    utils.getCppCompilerEnv("linux", { CC: "sccache cc" }, "x64"),
+    {},
+  );
+  assert.deepEqual(
+    utils.getCppCompilerEnv(
+      "linux",
+      { CC: "ccache gcc", CXX: "clang++-18" },
+      "x64",
+    ),
+    { CXX: "kache clang++-18", CC_KNOWN_WRAPPER_CUSTOM: "kache" },
+  );
+});
+
+test("getCppCompilerEnv never clobbers a user CC_KNOWN_WRAPPER_CUSTOM", () => {
+  // The slot is single-valued and user-owned; a user with their own custom
+  // wrapper keeps it even when we wrap their compiler.
+  const out = utils.getCppCompilerEnv(
+    "linux",
+    { CC: "clang-18", CC_KNOWN_WRAPPER_CUSTOM: "mywrapper" },
+    "x64",
+  );
+  assert.equal(out.CC, "kache clang-18");
+  assert.equal(out.CC_KNOWN_WRAPPER_CUSTOM, undefined);
+});
+
+test("getCmakeLauncherEnv fills only unset launcher slots", () => {
+  // The cmake crate drops the cc-rs wrapper (it passes only the compiler
+  // path), so CMake-built deps need the launcher route — but a launcher the
+  // user configured, including an explicitly empty one, wins.
+  assert.deepEqual(utils.getCmakeLauncherEnv("/opt/kache", {}), {
+    CMAKE_C_COMPILER_LAUNCHER: "/opt/kache",
+    CMAKE_CXX_COMPILER_LAUNCHER: "/opt/kache",
+  });
+  assert.deepEqual(
+    utils.getCmakeLauncherEnv("/opt/kache", {
+      CMAKE_C_COMPILER_LAUNCHER: "sccache",
+    }),
+    { CMAKE_CXX_COMPILER_LAUNCHER: "/opt/kache" },
+  );
+  assert.deepEqual(
+    utils.getCmakeLauncherEnv("/opt/kache", {
+      CMAKE_C_COMPILER_LAUNCHER: "",
+      CMAKE_CXX_COMPILER_LAUNCHER: "",
+    }),
+    {},
   );
 });

@@ -23,6 +23,7 @@ const {
   clearTransferLog,
   isNoCacheRequested,
   getCppCompilerEnv,
+  getCmakeLauncherEnv,
 } = require("./utils");
 
 async function run() {
@@ -192,7 +193,10 @@ async function run() {
     // Opt-in C/C++ object caching. Preserve an explicitly configured real
     // compiler and otherwise use kache's supported platform defaults.
     if (core.getBooleanInput("cache-c-cpp")) {
-      const compilerEnv = getCppCompilerEnv(os.platform(), process.env);
+      const compilerEnv = {
+        ...getCppCompilerEnv(os.platform(), process.env),
+        ...getCmakeLauncherEnv(kacheBin, process.env),
+      };
       for (const [name, value] of Object.entries(compilerEnv)) {
         core.exportVariable(name, value);
       }
