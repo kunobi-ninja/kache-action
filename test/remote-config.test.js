@@ -11,6 +11,7 @@ const {
   renderRemoteConfigToml,
   remoteConfigPath,
   writeRemoteConfig,
+  expectedRemoteDescription,
   daemonRemoteFromStats,
 } = require("../src/utils");
 
@@ -115,18 +116,59 @@ test("writeRemoteConfig creates the cache dir and lands atomically", () => {
   }
 });
 
-test("daemonRemoteFromStats recognizes an active remote", () => {
+test("writeRemoteConfig leaves an identical existing file untouched", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kache-remote-config-"));
+  try {
+    const remote = { bucket: "b", region: "r", prefix: "p", readonly: false };
+    const target = writeRemoteConfig(dir, remote);
+    const before = fs.statSync(target);
+    writeRemoteConfig(dir, remote);
+    const after = fs.statSync(target);
+    assert.equal(before.ino, after.ino);
+    assert.equal(before.mtimeMs, after.mtimeMs);
+    // A changed remote must still land.
+    writeRemoteConfig(dir, { ...remote, bucket: "other" });
+    assert.match(fs.readFileSync(target, "utf8"), /bucket = "other"/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("expectedRemoteDescription matches kache's describe() rendering", () => {
+  assert.equal(
+    expectedRemoteDescription({ bucket: "sccache", prefix: "kache" }),
+    "s3://sccache/kache",
+  );
+  assert.equal(
+    expectedRemoteDescription({ bucket: "sccache", prefix: "" }),
+    "s3://sccache",
+  );
+});
+
+test("daemonRemoteFromStats recognizes the expected active remote", () => {
   const stats = [
     "Daemon:     v0.15.1 (epoch 1787664243, config /tmp/kache/kache-action.toml)",
     "Remote:     s3://sccache/kache",
   ].join("\n");
-  assert.deepEqual(daemonRemoteFromStats(stats), {
+  assert.deepEqual(daemonRemoteFromStats(stats, "s3://sccache/kache"), {
     ok: true,
     detail: "s3://sccache/kache",
   });
+  // Without an expectation, any active remote passes.
+  assert.equal(daemonRemoteFromStats(stats).ok, true);
 });
 
-test("daemonRemoteFromStats flags local-only and misconfigured daemons", () => {
+test("daemonRemoteFromStats rejects a divergent remote", () => {
+  const verdict = daemonRemoteFromStats(
+    "Remote:     s3://other-bucket/elsewhere",
+    "s3://sccache/kache",
+  );
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.detail, /expected s3:\/\/sccache\/kache/);
+});
+
+test("daemonRemoteFromStats flags offline, local-only, and misconfigured daemons", () => {
+  assert.equal(daemonRemoteFromStats("Daemon:     offline").ok, false);
   assert.equal(daemonRemoteFromStats("Remote:     not configured").ok, false);
   assert.equal(
     daemonRemoteFromStats("Remote:     MISCONFIGURED — bad bucket").ok,
@@ -137,6 +179,14 @@ test("daemonRemoteFromStats flags local-only and misconfigured daemons", () => {
       .ok,
     false,
   );
+});
+
+test("daemonRemoteFromStats treats the client-config fallback as unverified", () => {
+  const verdict = daemonRemoteFromStats(
+    "Remote:     s3://sccache/kache [client config — daemon did not report its remote state]",
+    "s3://sccache/kache",
+  );
+  assert.equal(verdict.ok, null);
 });
 
 test("daemonRemoteFromStats returns null for unrecognized output", () => {
