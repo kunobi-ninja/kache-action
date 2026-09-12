@@ -48,3 +48,66 @@ jobs:
             git diff --stat dist/
             exit 1
           fi
+
+  cross-compile:
+    # kunobi-ninja/kache#823: a bare CC export sent riscv64 C compiles to the
+    # host gcc. With cache-c-cpp, the cc crate must pick the cross compiler,
+    # compile through kache, and hit the cache on a rebuild.
+    runs-on: ubuntu-latest
+    env:
+      TARGET: riscv64gc-unknown-linux-gnu
+      FIXTURE: test/fixtures/cross-cc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the riscv64 cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-riscv64-linux-gnu
+          rustup target add "$TARGET"
+
+      - uses: ./
+        with:
+          cache-c-cpp: true
+          github-cache: false
+          save-cache: false
+          pr-comment: false
+          job-summary: false
+
+      - name: Build for riscv64
+        run: cargo build --target "$TARGET" --manifest-path "$FIXTURE/Cargo.toml"
+
+      - name: The C object is RISC-V and compiled through kache
+        run: |
+          obj=$(find "$FIXTURE/target/$TARGET" -name '*answer.o' | head -n 1)
+          if [ -z "$obj" ]; then
+            echo "::error::no answer.o under $FIXTURE/target/$TARGET"
+            exit 1
+          fi
+          readelf -h "$obj" | grep 'Machine:'
+          if ! readelf -h "$obj" | grep -q 'RISC-V'; then
+            echo "::error::$obj is not a RISC-V object; the host compiler was used"
+            exit 1
+          fi
+          log="${KACHE_RUNTIME_DIR:-$KACHE_CACHE_DIR}/events.jsonl"
+          results=$(jq -r 'select(.crate_name == "answer.c") | .result' "$log" | tr '\n' ' ')
+          echo "answer.c events: $results"
+          case "$results" in
+            *miss*) ;;
+            *) echo "::error::answer.c did not compile through kache"; exit 1 ;;
+          esac
+
+      - name: Rebuild for riscv64 from a clean target
+        run: |
+          rm -rf "$FIXTURE/target"
+          cargo build --target "$TARGET" --manifest-path "$FIXTURE/Cargo.toml"
+
+      - name: The rebuilt C object came from the cache
+        run: |
+          log="${KACHE_RUNTIME_DIR:-$KACHE_CACHE_DIR}/events.jsonl"
+          results=$(jq -r 'select(.crate_name == "answer.c") | .result' "$log" | tr '\n' ' ')
+          echo "answer.c events: $results"
+          case "$results" in
+            *local_hit*) ;;
+            *) echo "::error::the rebuild did not hit the cache for answer.c"; exit 1 ;;
+          esac
