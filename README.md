@@ -55,7 +55,7 @@ Enable the C/C++ compiler wrappers explicitly:
     cache-c-cpp: true
 ```
 
-On Linux and macOS nothing is exported. The Rust `cc` crate already recognizes kache as a compiler wrapper through `RUSTC_WRAPPER` (cc 1.2.66 and newer), and applies it to whatever compiler it selects, so cross-compiled targets keep their own toolchain and still compile through the cache.
+On Linux and macOS nothing is exported. The Rust `cc` crate already recognizes kache as a compiler wrapper through `RUSTC_WRAPPER` (cc 1.2.66 and newer), and applies it to whatever compiler it selects, so cross-compiled targets keep their own toolchain and still compile through the cache. If a `Cargo.lock` in the workspace pins an older `cc`, setup prints a notice naming the lockfile; run `cargo update -p cc` to get C objects cached.
 
 On Windows the action sets `CC_<host-triple>` and `CXX_<host-triple>` to `kache clang-cl`, because without an explicit compiler `cc` selects MSVC `cl.exe`, which kache does not support. Scoping those to the runner's own triple leaves other targets to `cc`.
 

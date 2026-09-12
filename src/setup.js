@@ -24,6 +24,7 @@ const {
   isNoCacheRequested,
   getCppCompilerEnv,
   getCmakeLauncherEnv,
+  findOldCcLockfiles,
   writeRemoteConfig,
   expectedRemoteDescription,
   daemonRemoteFromStats,
@@ -211,6 +212,21 @@ async function run() {
           ? `C/C++ caching enabled via ${exported.join(", ")}`
           : "C/C++ caching enabled via RUSTC_WRAPPER (the cc crate wraps the compiler it selects, cross targets included)",
       );
+      // On Unix the cc crate wraps C compiles with kache only from 1.2.66. An
+      // older pin still builds but caches no C objects, so say so.
+      if (os.platform() !== "win32") {
+        try {
+          for (const { file, versions } of await findOldCcLockfiles()) {
+            core.notice(
+              `${path.relative(process.cwd(), file) || file} pins cc ${versions.join(", ")}. ` +
+                "C/C++ objects are cached only with cc 1.2.66 or newer, which recognizes kache through RUSTC_WRAPPER. " +
+                "Run `cargo update -p cc` to update it.",
+            );
+          }
+        } catch (err) {
+          core.debug(`Could not check Cargo.lock for the cc version: ${err.message}`);
+        }
+      }
     }
 
     // Max local store size before LRU eviction (applies regardless of backend)

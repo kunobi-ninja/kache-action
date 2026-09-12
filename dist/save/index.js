@@ -78373,6 +78373,51 @@ async function buildCacheKey(workspace = process.cwd()) {
   return { key, restoreKeys };
 }
 
+/** The first cc release that wraps C compiles with kache through
+ *  RUSTC_WRAPPER, which is how cache-c-cpp works on Linux and macOS. */
+const CC_WRAPPER_MIN_VERSION = [1, 2, 66];
+
+/** Whether a `major.minor.patch` version sorts before `minimum`. Anything
+ *  after the patch number, such as a pre-release tag, is ignored. */
+function versionBefore(version, minimum) {
+  const parts = version
+    .split(/[.+-]/)
+    .slice(0, minimum.length)
+    .map((part) => parseInt(part, 10) || 0);
+  for (let i = 0; i < minimum.length; i++) {
+    const part = parts[i] || 0;
+    if (part !== minimum[i]) return part < minimum[i];
+  }
+  return false;
+}
+
+/** Versions of the `cc` crate in a Cargo.lock that are too old to route C
+ *  compiles through kache. */
+function oldCcVersions(lockContent) {
+  const versions = [];
+  for (const entry of lockContent.split("[[package]]")) {
+    const name = /^name = "([^"]+)"/m.exec(entry)?.[1];
+    const version = /^version = "([^"]+)"/m.exec(entry)?.[1];
+    if (name === "cc" && version && versionBefore(version, CC_WRAPPER_MIN_VERSION)) {
+      versions.push(version);
+    }
+  }
+  return versions;
+}
+
+/** Every Cargo.lock under `workspace` that pins a cc too old for cache-c-cpp,
+ *  found the same way the cache key finds lockfiles. */
+async function findOldCcLockfiles(workspace = process.cwd()) {
+  const pattern = `${workspace}/**/Cargo.lock`.replace(/\\/g, "/");
+  const globber = await glob.create(pattern, { followSymbolicLinks: false });
+  const found = [];
+  for (const file of (await globber.glob()).sort()) {
+    const versions = oldCcVersions(fs.readFileSync(file, "utf8"));
+    if (versions.length) found.push({ file, versions });
+  }
+  return found;
+}
+
 /** Restore kache directory from GitHub Actions cache. Returns cache hit key or undefined. */
 async function restoreCache() {
   const cacheDir = getCacheDir();
@@ -78813,6 +78858,8 @@ module.exports = {
   daemonStatusUsesRuntimeDir,
   hasUnsafeEnvOnlyDaemonVersion,
   buildCacheKey,
+  oldCcVersions,
+  findOldCcLockfiles,
   restoreCache,
   saveCache,
   clearEventLog,
