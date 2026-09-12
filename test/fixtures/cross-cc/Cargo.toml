@@ -1,0 +1,15 @@
+# Fixture for the cross-compile CI job (kunobi-ninja/kache#823): a crate whose
+# build script compiles C through the cc crate, built for riscv64.
+[package]
+name = "cross-cc-fixture"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[build-dependencies]
+# 1.2.66 is the first cc release that wraps C compiles with kache through
+# RUSTC_WRAPPER, which is how cache-c-cpp works on Linux.
+cc = "1.2.66"
+
+# Keep this crate out of any enclosing workspace.
+[workspace]
