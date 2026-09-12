@@ -420,14 +420,27 @@ async function restoreCache() {
   }
 }
 
-/** Save kache directory to GitHub Actions cache */
-async function saveCache() {
+/** Whether the post step can skip saving: the restore matched the primary key
+ *  exactly, and a GitHub Actions cache entry is immutable, so a save would
+ *  compress the whole directory only to be rejected. A restore-key (prefix)
+ *  match still saves, under the new key. */
+function ghCacheSaveIsRedundant(restoredKey, key) {
+  return Boolean(restoredKey) && restoredKey === key;
+}
+
+/** Save kache directory to GitHub Actions cache. `restoredKey` is the key the
+ *  setup step restored from, if any. */
+async function saveCache(restoredKey) {
   const cacheDir = getCacheDir();
   if (!fs.existsSync(cacheDir)) {
     core.info("No kache cache directory to save");
     return;
   }
   const { key } = await buildCacheKey();
+  if (ghCacheSaveIsRedundant(restoredKey, key)) {
+    core.info(`GitHub cache already holds key ${key}; skipping save`);
+    return;
+  }
   try {
     await cache.saveCache([cacheDir], key);
     core.info(`GitHub cache saved with key: ${key}`);
@@ -842,6 +855,7 @@ module.exports = {
   hasUnsafeEnvOnlyDaemonVersion,
   buildCacheKey,
   restoreCache,
+  ghCacheSaveIsRedundant,
   saveCache,
   clearEventLog,
   clearTransferLog,

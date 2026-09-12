@@ -304,7 +304,9 @@ async function run() {
       await runKache(["sync", "--pull"]);
     } else if (ghCache) {
       core.info("Restoring cache from GitHub Actions cache...");
-      await restoreCache();
+      // The post step skips its save when this matched the exact key.
+      const restoredKey = await restoreCache();
+      core.saveState("gh-cache-restored-key", restoredKey || "");
     }
 
     // Clear event and transfer logs so we only capture this run's data

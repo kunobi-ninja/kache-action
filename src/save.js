@@ -44,7 +44,7 @@ async function run() {
       await runKache(["sync", "--push"]);
     } else if (ghCache) {
       core.info("Saving cache to GitHub Actions cache...");
-      await saveCache();
+      await saveCache(core.getState("gh-cache-restored-key"));
     }
 
     // Get report markdown directly from kache (kache owns all rendering)
