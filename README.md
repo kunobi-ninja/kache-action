@@ -10,7 +10,7 @@ GitHub Action for [kache](https://github.com/kunobi-ninja/kache) — a content-a
 - **Per-crate, content-addressed store** — identical artifact blobs are stored once and shared, indexed by a local SQLite DB.
 - **Local store + optional S3 remote** — local caching works on its own; an optional S3-compatible remote (AWS, Ceph, MinIO, R2) shares the cache across machines and runners.
 - **Background daemon** — handles async S3 uploads, remote checks, and manifest-driven warm prefetch of expensive artifacts.
-- **LRU eviction** — the local store is capped (`KACHE_MAX_SIZE`, default 50GiB) and evicts least-recently-used entries.
+- **LRU eviction** — the local store uses 5% of its volume by default (5–100 GiB), or the limit set by `KACHE_MAX_SIZE`, and evicts least-recently-used entries.
 
 Installs kache, sets it as `RUSTC_WRAPPER`, and persists the cache between runs. Supported C/C++ object compiles can also be cached with an opt-in setting. Works out of the box with GitHub's built-in cache, or with any S3-compatible backend.
 
@@ -188,7 +188,7 @@ keeping ordinary S3/v3 behavior. Trust-policy violations still fail closed.
 | `token` | `${{ github.token }}` | GitHub token for fetching releases and posting PR comments (needs `pull-requests: write` for comments) |
 | `pr-comment` | `true` | Post/update a sticky PR comment with cache stats. |
 | `job-summary` | `true` | Write cache stats to the GitHub Actions job summary. |
-| `max-size` | `50GiB` (kache default) | Max local kache store size before LRU eviction (e.g. `100GiB`). Maps to `KACHE_MAX_SIZE`. Controls the **local** store, not a remote/S3 cap. |
+| `max-size` | Unset; kache uses 5% of cache volume (5–100 GiB) | Max local kache store size before LRU eviction (e.g. `100GiB`). Maps to `KACHE_MAX_SIZE`. If the volume size cannot be read, kache uses 50 GiB. Controls the **local** store, not a remote/S3 cap. |
 
 > **S3-only inputs:** `sync`, `warm`, `manifest-key`, `namespace`, and `min-compile-ms` only take effect with the S3 backend. They tune how the kache daemon *selectively prefetches* expensive artifacts from the remote during setup. The GitHub Actions cache backend has nothing to prefetch — it restores the entire local store in one shot via `@actions/cache` and starts no daemon — so these inputs are ignored when S3 is not configured.
 
