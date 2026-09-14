@@ -89,7 +89,7 @@ inputs:
     required: false
     default: "true"
   max-size:
-    description: 'Max local kache store size before LRU eviction (e.g. "100GiB"). Maps to KACHE_MAX_SIZE; kache defaults to 50GiB. Controls the local store, not a remote/S3 cap.'
+    description: 'Max local kache store size before LRU eviction (e.g. "100GiB"). Maps to KACHE_MAX_SIZE. Default: 5% of the cache volume, between 5 GiB and 100 GiB. Controls the local store, not a remote/S3 cap.'
     required: false
 
 runs:
