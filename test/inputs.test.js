@@ -188,7 +188,11 @@ test("a private runtime dir is created 0700 and accepted when it already is ours
   try {
     const dir = path.join(parent, "runtime");
     utils.ensurePrivateDir(dir);
-    assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+    // Windows has no Unix permission bits: it reports 0666 whatever was asked,
+    // and the default there stays under runner.temp anyway.
+    if (process.platform !== "win32") {
+      assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+    }
     utils.ensurePrivateDir(dir);
   } finally {
     fs.rmSync(parent, { recursive: true, force: true });
