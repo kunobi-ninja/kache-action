@@ -52,14 +52,11 @@ jobs:
   cross-compile:
     # kunobi-ninja/kache#823: a bare CC export sent riscv64 C compiles to the
     # host gcc. With cache-c-cpp, the cc crate must pick the cross compiler,
-    # compile through kache, and hit the cache on a rebuild.
+    # compile through kache, and come from the cache on a rebuild.
     runs-on: ubuntu-latest
     env:
       TARGET: riscv64gc-unknown-linux-gnu
       FIXTURE: test/fixtures/cross-cc
-      # Kache restores a matching build-script run whole, so on the rebuild
-      # cc would not run and answer.c would never reach the C cache.
-      KACHE_BUILD_SCRIPT_CACHE: "0"
     steps:
       - uses: actions/checkout@v4
 
@@ -102,15 +99,27 @@ jobs:
 
       - name: Rebuild for riscv64 from a clean target
         run: |
+          echo "EVENTS_BEFORE_REBUILD=$(wc -l < "${KACHE_RUNTIME_DIR:-$KACHE_CACHE_DIR}/events.jsonl")" >> "$GITHUB_ENV"
           rm -rf "$FIXTURE/target"
           cargo build --target "$TARGET" --manifest-path "$FIXTURE/Cargo.toml"
 
+      # Kache either restores the fixture's whole build-script run, so cc does
+      # not run at all, or cc runs and answer.c hits the C cache. Either way the
+      # rebuild must not compile answer.c again.
       - name: The rebuilt C object came from the cache
         run: |
+          obj=$(find "$FIXTURE/target/$TARGET" -name '*answer.o' | head -n 1)
+          if [ -z "$obj" ] || ! readelf -h "$obj" | grep -q 'RISC-V'; then
+            echo "::error::the rebuild did not restore a RISC-V answer.o"
+            exit 1
+          fi
           log="${KACHE_RUNTIME_DIR:-$KACHE_CACHE_DIR}/events.jsonl"
-          results=$(jq -r 'select(.crate_name == "answer.c") | .result' "$log" | tr '\n' ' ')
-          echo "answer.c events: $results"
+          results=$(tail -n "+$((EVENTS_BEFORE_REBUILD + 1))" "$log" \
+            | jq -r 'select(.crate_name == "answer.c" or .crate_name == "build_script_run") | "\(.crate_name)=\(.result)"' \
+            | tr '\n' ' ')
+          echo "rebuild events: $results"
           case "$results" in
-            *local_hit*) ;;
-            *) echo "::error::the rebuild did not hit the cache for answer.c"; exit 1 ;;
+            *answer.c=miss*) echo "::error::the rebuild compiled answer.c again"; exit 1 ;;
+            *answer.c=local_hit*|*build_script_run=local_hit*) ;;
+            *) echo "::error::the rebuild did not take answer.c from the cache"; exit 1 ;;
           esac
