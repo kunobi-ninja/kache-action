@@ -139,6 +139,23 @@ This is useful on GitHub-hosted Windows runners and ephemeral self-hosted runner
 whose home and workspace directories are on different volumes. Persistent
 self-hosted runners can omit the input to retain a warm cache between jobs.
 
+On Linux, where no reflinks are available kache hardlinks cached artifacts into
+`target/`. A hardlink cannot cross a mount, even between two bind mounts of one
+disk. At startup the action tries one hardlink from the workspace into the cache
+dir:
+
+- If the default cache dir is on another mount, the action uses the first of
+  `${{ runner.temp }}/kache` and `.kache-cache` in the directory above the workspace
+  that links.
+- If a `cache-dir` you set is on another mount, the action keeps it and adds a
+  warning to the job. kache still works there, but copies every artifact into
+  `target/`, so the job holds each one twice.
+
+In a `container:` job the runner mounts `HOME` (`/github/home`) and `runner.temp`
+(`/__w/_temp`) separately from the workspace under `/__w`, so neither can link into
+`target/`. Leave `cache-dir` unset there and the action picks the directory above
+the workspace.
+
 For trusted Linux ephemeral runners that mount a persistent per-node directory, keep
 the store persistent but move every daemon/socket/log/session file into the job:
 

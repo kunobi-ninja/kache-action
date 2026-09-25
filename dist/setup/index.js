@@ -78260,6 +78260,86 @@ function getCacheDir() {
   return getCacheDirFor(os.platform(), process.env, os.homedir());
 }
 
+/** Whether a file created in `fromDir` can be hardlinked into `toDir`:
+ *  "ok", "cross-mount" when link(2) fails with EXDEV, or "unknown" when the
+ *  probe could not run or failed for another reason. Linux refuses a link
+ *  across two bind mounts even when both report the same device, so only a
+ *  real link attempt answers this. */
+function probeHardlink(fromDir, toDir, fsApi = __nccwpck_require__(79896)) {
+  const name = `.kache-action-link-probe-${process.pid}-${Date.now()}`;
+  const src = path.join(fromDir, name);
+  const dst = path.join(toDir, name);
+  let created = false;
+  let madeDir;
+  let result = "unknown";
+  try {
+    fsApi.writeFileSync(src, "", { flag: "wx", mode: 0o600 });
+    created = true;
+    madeDir = fsApi.mkdirSync(toDir, { recursive: true });
+    fsApi.linkSync(src, dst);
+    result = "ok";
+  } catch (error) {
+    if (error && error.code === "EXDEV") result = "cross-mount";
+  }
+  for (const file of created ? [dst, src] : []) {
+    try {
+      fsApi.unlinkSync(file);
+    } catch {
+      // The link may not exist.
+    }
+  }
+  // A directory made only for a probe that failed would be left behind next
+  // to the workspace on a persistent runner.
+  if (result !== "ok" && madeDir) {
+    try {
+      fsApi.rmSync(madeDir, { recursive: true, force: true });
+    } catch {
+      // Best effort.
+    }
+  }
+  return result;
+}
+
+/** Keep the cache on the workspace's mount so kache can hardlink artifacts
+ *  into target/ (kunobi-ninja/kache#835). A `container:` job bind-mounts
+ *  /github/home (HOME) and /__w/_temp (RUNNER_TEMP) separately from /__w,
+ *  so neither can link into the workspace; the directory holding the
+ *  workspace can. Returns the cache dir to use and at most one message for
+ *  the log. */
+function colocateCacheDir(
+  { cacheDir, configured, workspace, runnerTemp },
+  probe = probeHardlink,
+) {
+  if (!workspace || probe(workspace, cacheDir) !== "cross-mount") {
+    return { cacheDir };
+  }
+  const problem = `${cacheDir} is on a different mount from the workspace ${workspace}, so kache copies every artifact into target/ instead of hardlinking it, which doubles its disk use`;
+  if (configured) {
+    return {
+      cacheDir,
+      warning: `cache-dir ${problem}. Set cache-dir to a directory on the workspace's mount.`,
+    };
+  }
+  // RUNNER_TEMP first: the runner empties it after every job. The name next
+  // to the workspace cannot be the workspace itself, even for a repo named
+  // kache.
+  const candidates = [
+    runnerTemp && path.join(runnerTemp, "kache"),
+    path.join(path.dirname(workspace), ".kache-cache"),
+  ].filter(Boolean);
+  const colocated = candidates.find((dir) => probe(workspace, dir) === "ok");
+  if (colocated) {
+    return {
+      cacheDir: colocated,
+      info: `The default cache dir ${cacheDir} is on a different mount from the workspace ${workspace}. Using ${colocated}, which is on the same mount, so kache can hardlink artifacts.`,
+    };
+  }
+  return {
+    cacheDir,
+    warning: `The default cache dir ${problem}. Set cache-dir to a directory on the workspace's mount.`,
+  };
+}
+
 const NODE_CACHE_MIN_FREE_BYTES = 10 * 1024 * 1024 * 1024;
 
 /** Verify that the persistent node store is writable and has enough headroom
@@ -78919,6 +78999,8 @@ module.exports = {
   hostTargetTriple,
   getCacheDir,
   getCacheDirFor,
+  probeHardlink,
+  colocateCacheDir,
   checkNodeCacheStore,
   nodeCacheFallbackDir,
   getRuntimeDir,
@@ -120961,6 +121043,7 @@ const {
   isNodeCacheEnabled,
   isForkPullRequest,
   getCacheDir,
+  colocateCacheDir,
   checkNodeCacheStore,
   nodeCacheFallbackDir,
   getRuntimeDir,
@@ -121069,6 +121152,21 @@ async function run() {
     }
     if (nodeCache && isForkPullRequest()) {
       throw new Error("node-cache is forbidden for pull requests from forks");
+    }
+    // A node cache sits on its own mount on purpose, and only Linux restores
+    // through hardlinks when reflinks are unavailable.
+    if (!nodeCache && os.platform() === "linux") {
+      const layout = colocateCacheDir({
+        cacheDir,
+        configured: Boolean(
+          core.getInput("cache-dir") || process.env.KACHE_CACHE_DIR,
+        ),
+        workspace: process.env.GITHUB_WORKSPACE,
+        runnerTemp: process.env.RUNNER_TEMP,
+      });
+      cacheDir = layout.cacheDir;
+      if (layout.info) core.info(layout.info);
+      if (layout.warning) core.warning(layout.warning);
     }
     core.exportVariable("KACHE_CACHE_DIR", cacheDir);
     core.exportVariable("KACHE_EFFECTIVE_CACHE_DIR", cacheDir);
