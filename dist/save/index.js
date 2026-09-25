@@ -78319,14 +78319,68 @@ function getRuntimeDir() {
     }
     return "";
   }
+  return defaultRuntimeDir(process.env, process.platform);
+}
+
+/**
+ * The runtime directory the action picks when none is configured.
+ *
+ * The daemon's Unix sockets live in it, and a socket path must fit in
+ * `sun_path`: 103 bytes on macOS, 107 on Linux. The old default,
+ * `$RUNNER_TEMP/kache-runtime-<run>-<attempt>-<job>`, put the job name inside
+ * that budget: on the self-hosted macOS runners it reached exactly 103 bytes for
+ * `daemon.sock` with a ten-character job name, so any longer job name, runner
+ * name or run id could not bind at all.
+ *
+ * On Unix the directory is now a fixed-length name under `/tmp`, so the socket
+ * path is about 43 bytes whatever the job is called. The name hashes
+ * `RUNNER_TEMP` with the job identity: runners that share a host share `/tmp`,
+ * and the legs of a matrix share run, attempt and job, so without the runner's
+ * own temp directory in the hash, two legs on one host would share a daemon.
+ * Windows keeps the old layout, since named pipes are not bound by that limit.
+ */
+function defaultRuntimeDir(env, platform) {
   const identity = [
-    process.env.GITHUB_RUN_ID || "run",
-    process.env.GITHUB_RUN_ATTEMPT || "1",
-    process.env.GITHUB_JOB || "job",
+    env.GITHUB_RUN_ID || "run",
+    env.GITHUB_RUN_ATTEMPT || "1",
+    env.GITHUB_JOB || "job",
   ]
     .join("-")
     .replace(/[^A-Za-z0-9_.-]/g, "_");
-  return path.join(runnerTemp, `kache-runtime-${identity}`);
+  if (platform === "win32") {
+    return path.join(env.RUNNER_TEMP, `kache-runtime-${identity}`);
+  }
+  const digest = crypto
+    .createHash("sha256")
+    .update(`${env.RUNNER_TEMP}\0${identity}`)
+    .digest("hex")
+    .slice(0, 16);
+  return path.posix.join("/tmp", `kache-${digest}`);
+}
+
+/**
+ * Create a runtime directory in a shared location, or accept one this user
+ * already owns.
+ *
+ * `/tmp` is shared between users and the name is derivable from public run
+ * data, so another account could create it first. A directory that is a
+ * symlink or belongs to someone else is refused rather than used: the daemon's
+ * sockets and locks must not land where another user can reach them.
+ */
+function ensurePrivateDir(dir) {
+  try {
+    fs.mkdirSync(dir, { mode: 0o700 });
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  }
+  const stat = fs.lstatSync(dir);
+  if (!stat.isDirectory()) {
+    throw new Error(`kache runtime directory ${dir} exists and is not a plain directory`);
+  }
+  if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
+    throw new Error(`kache runtime directory ${dir} belongs to another user`);
+  }
+  if ((stat.mode & 0o077) !== 0) fs.chmodSync(dir, 0o700);
 }
 
 /** Fail-closed feature probe for Kache releases that understand
@@ -78868,6 +78922,8 @@ module.exports = {
   checkNodeCacheStore,
   nodeCacheFallbackDir,
   getRuntimeDir,
+  defaultRuntimeDir,
+  ensurePrivateDir,
   daemonStatusUsesRuntimeDir,
   hasUnsafeEnvOnlyDaemonVersion,
   buildCacheKey,
@@ -120891,6 +120947,7 @@ module.exports = /*#__PURE__*/JSON.parse('{"name":"@actions/cache","version":"5.
 /************************************************************************/
 var __webpack_exports__ = {};
 const core = __nccwpck_require__(37484);
+const fs = __nccwpck_require__(79896);
 const {
   REPORT_HEADING,
   runKache,
@@ -121042,12 +121099,22 @@ async function run() {
     // Post step should not fail the build
     core.warning(`kache post step failed: ${error.message}`);
   } finally {
-    if (stopDaemon) {
+    // A runtime directory the action created lives outside RUNNER_TEMP, so
+    // nothing else removes it. Stop whatever daemon holds its sockets first.
+    const ownedRuntimeDir = core.getState("runtime-dir-owned");
+    if (stopDaemon || ownedRuntimeDir) {
       try {
         core.info("Stopping job-scoped kache daemon...");
         await runKache(["daemon", "stop"]);
       } catch (error) {
         core.warning(`Failed to stop job-scoped kache daemon: ${error.message}`);
+      }
+    }
+    if (ownedRuntimeDir) {
+      try {
+        fs.rmSync(ownedRuntimeDir, { recursive: true, force: true });
+      } catch (error) {
+        core.warning(`Failed to remove kache runtime directory ${ownedRuntimeDir}: ${error.message}`);
       }
     }
   }

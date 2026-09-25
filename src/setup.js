@@ -16,6 +16,7 @@ const {
   checkNodeCacheStore,
   nodeCacheFallbackDir,
   getRuntimeDir,
+  ensurePrivateDir,
   daemonStatusUsesRuntimeDir,
   hasUnsafeEnvOnlyDaemonVersion,
   restoreCache,
@@ -124,12 +125,22 @@ async function run() {
     core.exportVariable("KACHE_CACHE_DIR", cacheDir);
     core.exportVariable("KACHE_EFFECTIVE_CACHE_DIR", cacheDir);
     core.info(`KACHE_CACHE_DIR=${cacheDir}`);
+    // A directory the caller named (input, or an earlier step's export) is
+    // theirs to manage. One the action derives lives outside RUNNER_TEMP, which
+    // the runner would otherwise clean, so the post step removes it.
+    const runtimeDirConfigured = Boolean(
+      core.getInput("runtime-dir") || process.env.KACHE_RUNTIME_DIR,
+    );
     const runtimeDir = getRuntimeDir();
     if (runtimeDir) {
       if (nodeCache && path.resolve(runtimeDir) === path.resolve(cacheDir)) {
         throw new Error(
           "runtime-dir must differ from cache-dir in node-cache mode",
         );
+      }
+      if (!runtimeDirConfigured) {
+        ensurePrivateDir(runtimeDir);
+        core.saveState("runtime-dir-owned", runtimeDir);
       }
       core.exportVariable("KACHE_RUNTIME_DIR", runtimeDir);
       core.info(`KACHE_RUNTIME_DIR=${runtimeDir}`);
