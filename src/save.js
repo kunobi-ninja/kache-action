@@ -1,4 +1,5 @@
 const core = require("@actions/core");
+const fs = require("fs");
 const {
   REPORT_HEADING,
   runKache,
@@ -150,12 +151,22 @@ async function run() {
     // Post step should not fail the build
     core.warning(`kache post step failed: ${error.message}`);
   } finally {
-    if (stopDaemon) {
+    // A runtime directory the action created lives outside RUNNER_TEMP, so
+    // nothing else removes it. Stop whatever daemon holds its sockets first.
+    const ownedRuntimeDir = core.getState("runtime-dir-owned");
+    if (stopDaemon || ownedRuntimeDir) {
       try {
         core.info("Stopping job-scoped kache daemon...");
         await runKache(["daemon", "stop"]);
       } catch (error) {
         core.warning(`Failed to stop job-scoped kache daemon: ${error.message}`);
+      }
+    }
+    if (ownedRuntimeDir) {
+      try {
+        fs.rmSync(ownedRuntimeDir, { recursive: true, force: true });
+      } catch (error) {
+        core.warning(`Failed to remove kache runtime directory ${ownedRuntimeDir}: ${error.message}`);
       }
     }
   }

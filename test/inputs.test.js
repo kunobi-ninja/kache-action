@@ -1,6 +1,7 @@
 // Tests for backend-selection, cache-dir resolution, and the [no-cache] opt-out.
 const { test, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const github = require("@actions/github");
@@ -132,15 +133,79 @@ test("getCacheDir falls back to an absolute per-OS path ending in 'kache'", () =
   assert.ok(dir.startsWith(os.homedir()));
 });
 
-test("every Actions job derives a stable job-scoped runtime dir", () => {
-  process.env.RUNNER_TEMP = "/runner/temp";
-  process.env.GITHUB_RUN_ID = "42";
-  process.env.GITHUB_RUN_ATTEMPT = "2";
+// The environment of the macOS release leg that could not start its daemon.
+const MAC_RUNNER = {
+  RUNNER_TEMP: "/Users/zondax-ci/actions-runner/runner-3/_work/_temp",
+  GITHUB_RUN_ID: "36081599948",
+  GITHUB_RUN_ATTEMPT: "1",
+  GITHUB_JOB: "build-sign",
+};
+const SUN_PATH_MACOS = 103;
+
+test("the default runtime dir keeps the daemon socket short whatever the job is called", () => {
+  // The old default put the job name in the path: this runner reached exactly
+  // 103 bytes for daemon.sock, and a longer job name did not fit at all.
+  for (const job of ["build-sign", "a-matrix-leg-with-a-considerably-longer-job-name-than-usual"]) {
+    const dir = utils.defaultRuntimeDir({ ...MAC_RUNNER, GITHUB_JOB: job }, "darwin");
+    for (const socket of ["daemon.sock", "daemon.control.v2.sock"]) {
+      const bytes = Buffer.byteLength(path.posix.join(dir, socket));
+      assert.ok(bytes <= SUN_PATH_MACOS, `${socket} under ${dir} is ${bytes} bytes`);
+    }
+  }
+});
+
+test("the default runtime dir is stable for one job", () => {
+  assert.equal(
+    utils.defaultRuntimeDir(MAC_RUNNER, "linux"),
+    utils.defaultRuntimeDir({ ...MAC_RUNNER }, "linux"),
+  );
+});
+
+test("runners sharing a host get distinct default runtime dirs", () => {
+  // Matrix legs share run, attempt and job, and runners on one host share
+  // /tmp; only the runner's own temp directory tells two legs apart.
+  const a = utils.defaultRuntimeDir(MAC_RUNNER, "darwin");
+  const b = utils.defaultRuntimeDir(
+    { ...MAC_RUNNER, RUNNER_TEMP: "/Users/zondax-ci/actions-runner/runner-1/_work/_temp" },
+    "darwin",
+  );
+  assert.notEqual(a, b);
+});
+
+test("Windows keeps its runner-temp runtime layout", () => {
   process.env.GITHUB_JOB = "checks/rust";
   assert.equal(
-    utils.getRuntimeDir(),
-    path.join("/runner/temp", "kache-runtime-42-2-checks_rust")
+    utils.defaultRuntimeDir(
+      { RUNNER_TEMP: "/runner/temp", GITHUB_RUN_ID: "42", GITHUB_RUN_ATTEMPT: "2", GITHUB_JOB: "checks/rust" },
+      "win32",
+    ),
+    path.join("/runner/temp", "kache-runtime-42-2-checks_rust"),
   );
+});
+
+test("a private runtime dir is created 0700 and accepted when it already is ours", () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "kache-rt-"));
+  try {
+    const dir = path.join(parent, "runtime");
+    utils.ensurePrivateDir(dir);
+    assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+    utils.ensurePrivateDir(dir);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("a runtime dir that is a symlink is refused", () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "kache-rt-"));
+  try {
+    const target = path.join(parent, "elsewhere");
+    fs.mkdirSync(target);
+    const link = path.join(parent, "runtime");
+    fs.symlinkSync(target, link);
+    assert.throws(() => utils.ensurePrivateDir(link), /not a plain directory/);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
 });
 
 test("runtime-dir input and environment override job derivation", () => {

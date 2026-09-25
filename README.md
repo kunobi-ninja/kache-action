@@ -150,7 +150,7 @@ the store persistent but move every daemon/socket/log/session file into the job:
 ```
 
 `node-cache` requires an explicit `cache-dir`, derives a unique runtime directory
-under `runner.temp`, and disables GitHub Actions cache persistence. The mounted
+per job, and disables GitHub Actions cache persistence. The mounted
 store must exist only on a runner scale set restricted to mutually trusted
 repositories/workflows. The action rejects fork PRs as defense in depth, but an
 `if:` condition is not a security boundary: untrusted pods must never receive the
@@ -177,7 +177,7 @@ keeping ordinary S3/v3 behavior. Trust-policy violations still fail closed.
 | `github-cache` | `true` | Use GitHub Actions cache for the local store when S3 is not configured |
 | `cache-dir` | native kache cache directory | Local kache store directory. Use `${{ runner.temp }}/kache` to colocate it with the runner workspace. |
 | `node-cache` | `false` | Reuse `cache-dir` as a trusted node-local store across ephemeral jobs. Requires a runner mount trust boundary and disables GitHub Actions cache persistence. |
-| `runtime-dir` | job-scoped under `runner.temp` in Actions | Override sockets, locks, logs, events, and build-session state. Every Actions job is isolated, even when `cache-dir` is persistent. |
+| `runtime-dir` | job-scoped `/tmp/kache-<hash>` in Actions (`runner.temp` on Windows) | Override sockets, locks, logs, events, and build-session state. Every Actions job is isolated, even when `cache-dir` is persistent. The default is short on purpose: a Unix socket path holds at most 103 bytes on macOS, and a path under `runner.temp` that includes the job name can exceed it on self-hosted runners. An action-derived directory is created `0700` and removed by the post step; one you set is left alone. |
 | `save-cache` | `true` | Save cache changes after the build. Set to `false` for restore-only jobs; with S3 this also disables remote uploads. |
 | `cache-key-prefix` | `kache` | Prefix for the GitHub Actions cache key |
 | `sync` | `false` | Pull the **entire** remote cache on setup (slow; prefer `warm`). S3 only. |
