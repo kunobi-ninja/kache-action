@@ -298,30 +298,42 @@ function probeHardlink(fromDir, toDir, fsApi = require("fs")) {
   const src = path.join(fromDir, name);
   const dst = path.join(toDir, name);
   let created = false;
+  let madeDir;
+  let result = "unknown";
   try {
     fsApi.writeFileSync(src, "", { flag: "wx", mode: 0o600 });
     created = true;
-    fsApi.mkdirSync(toDir, { recursive: true });
+    madeDir = fsApi.mkdirSync(toDir, { recursive: true });
     fsApi.linkSync(src, dst);
-    return "ok";
+    result = "ok";
   } catch (error) {
-    return error && error.code === "EXDEV" ? "cross-mount" : "unknown";
-  } finally {
-    for (const file of created ? [dst, src] : []) {
-      try {
-        fsApi.unlinkSync(file);
-      } catch {
-        // The link may not exist.
-      }
+    if (error && error.code === "EXDEV") result = "cross-mount";
+  }
+  for (const file of created ? [dst, src] : []) {
+    try {
+      fsApi.unlinkSync(file);
+    } catch {
+      // The link may not exist.
     }
   }
+  // A directory made only for a probe that failed would be left behind next
+  // to the workspace on a persistent runner.
+  if (result !== "ok" && madeDir) {
+    try {
+      fsApi.rmSync(madeDir, { recursive: true, force: true });
+    } catch {
+      // Best effort.
+    }
+  }
+  return result;
 }
 
 /** Keep the cache on the workspace's mount so kache can hardlink artifacts
- *  into target/ (kunobi-ninja/kache#835). In a `container:` job, HOME is
- *  /github/home, a bind mount separate from the workspace under /__w, so the
- *  default cache dir cannot link into the build tree while RUNNER_TEMP can.
- *  Returns the cache dir to use and at most one message for the log. */
+ *  into target/ (kunobi-ninja/kache#835). A `container:` job bind-mounts
+ *  /github/home (HOME) and /__w/_temp (RUNNER_TEMP) separately from /__w,
+ *  so neither can link into the workspace; the directory holding the
+ *  workspace can. Returns the cache dir to use and at most one message for
+ *  the log. */
 function colocateCacheDir(
   { cacheDir, configured, workspace, runnerTemp },
   probe = probeHardlink,
@@ -329,16 +341,22 @@ function colocateCacheDir(
   if (!workspace || probe(workspace, cacheDir) !== "cross-mount") {
     return { cacheDir };
   }
-  const cost =
-    "kache copies every artifact into target/ instead of hardlinking it, which doubles its disk use";
+  const problem = `${cacheDir} is on a different mount from the workspace ${workspace}, so kache copies every artifact into target/ instead of hardlinking it, which doubles its disk use`;
   if (configured) {
     return {
       cacheDir,
-      warning: `cache-dir ${cacheDir} is on a different mount from the workspace ${workspace}, so ${cost}. Set cache-dir to a directory on the workspace's mount, such as \${{ runner.temp }}/kache.`,
+      warning: `cache-dir ${problem}. Set cache-dir to a directory on the workspace's mount.`,
     };
   }
-  const colocated = runnerTemp ? path.join(runnerTemp, "kache") : "";
-  if (colocated && probe(workspace, colocated) === "ok") {
+  // RUNNER_TEMP first: the runner empties it after every job. The name next
+  // to the workspace cannot be the workspace itself, even for a repo named
+  // kache.
+  const candidates = [
+    runnerTemp && path.join(runnerTemp, "kache"),
+    path.join(path.dirname(workspace), ".kache-cache"),
+  ].filter(Boolean);
+  const colocated = candidates.find((dir) => probe(workspace, dir) === "ok");
+  if (colocated) {
     return {
       cacheDir: colocated,
       info: `The default cache dir ${cacheDir} is on a different mount from the workspace ${workspace}. Using ${colocated}, which is on the same mount, so kache can hardlink artifacts.`,
@@ -346,7 +364,7 @@ function colocateCacheDir(
   }
   return {
     cacheDir,
-    warning: `The cache dir ${cacheDir} is on a different mount from the workspace ${workspace}, so ${cost}. Set cache-dir to a directory on the workspace's mount.`,
+    warning: `The default cache dir ${problem}. Set cache-dir to a directory on the workspace's mount.`,
   };
 }
 

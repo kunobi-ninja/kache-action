@@ -50,10 +50,11 @@ jobs:
           fi
 
   container-cache-dir:
-    # kunobi-ninja/kache#835: in a container job HOME is /github/home, a bind
-    # mount separate from the workspace, so the default cache dir cannot
-    # hardlink into target/. The action must move the cache under RUNNER_TEMP,
-    # and cached rlibs must then share inodes with the build tree.
+    # kunobi-ninja/kache#835: a container job bind-mounts HOME (/github/home)
+    # and RUNNER_TEMP (/__w/_temp) separately from the workspace, so neither
+    # can hardlink into target/. The action must move the cache onto the
+    # workspace's mount, and cached rlibs must then share inodes with the
+    # build tree.
     runs-on: ubuntu-latest
     container: rust:1-bookworm
     env:
@@ -68,12 +69,11 @@ jobs:
           pr-comment: false
           job-summary: false
 
-      - name: The cache dir is under RUNNER_TEMP
+      - name: The cache dir left HOME
         run: |
           echo "HOME=$HOME KACHE_CACHE_DIR=$KACHE_CACHE_DIR RUNNER_TEMP=$RUNNER_TEMP"
           case "$KACHE_CACHE_DIR" in
-            "$RUNNER_TEMP"/*) ;;
-            *) echo "::error::KACHE_CACHE_DIR is not under RUNNER_TEMP"; exit 1 ;;
+            "$HOME"/*) echo "::error::KACHE_CACHE_DIR is still under HOME"; exit 1 ;;
           esac
 
       - name: Build, then rebuild from a clean target
