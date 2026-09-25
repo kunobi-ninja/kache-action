@@ -13,6 +13,7 @@ const {
   isNodeCacheEnabled,
   isForkPullRequest,
   getCacheDir,
+  colocateCacheDir,
   checkNodeCacheStore,
   nodeCacheFallbackDir,
   getRuntimeDir,
@@ -121,6 +122,21 @@ async function run() {
     }
     if (nodeCache && isForkPullRequest()) {
       throw new Error("node-cache is forbidden for pull requests from forks");
+    }
+    // A node cache sits on its own mount on purpose, and only Linux restores
+    // through hardlinks when reflinks are unavailable.
+    if (!nodeCache && os.platform() === "linux") {
+      const layout = colocateCacheDir({
+        cacheDir,
+        configured: Boolean(
+          core.getInput("cache-dir") || process.env.KACHE_CACHE_DIR,
+        ),
+        workspace: process.env.GITHUB_WORKSPACE,
+        runnerTemp: process.env.RUNNER_TEMP,
+      });
+      cacheDir = layout.cacheDir;
+      if (layout.info) core.info(layout.info);
+      if (layout.warning) core.warning(layout.warning);
     }
     core.exportVariable("KACHE_CACHE_DIR", cacheDir);
     core.exportVariable("KACHE_EFFECTIVE_CACHE_DIR", cacheDir);

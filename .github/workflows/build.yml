@@ -49,6 +49,48 @@ jobs:
             exit 1
           fi
 
+  container-cache-dir:
+    # kunobi-ninja/kache#835: in a container job HOME is /github/home, a bind
+    # mount separate from the workspace, so the default cache dir cannot
+    # hardlink into target/. The action must move the cache under RUNNER_TEMP,
+    # and cached rlibs must then share inodes with the build tree.
+    runs-on: ubuntu-latest
+    container: rust:1-bookworm
+    env:
+      FIXTURE: test/fixtures/cross-cc
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./
+        with:
+          github-cache: false
+          save-cache: false
+          pr-comment: false
+          job-summary: false
+
+      - name: The cache dir is under RUNNER_TEMP
+        run: |
+          echo "HOME=$HOME KACHE_CACHE_DIR=$KACHE_CACHE_DIR RUNNER_TEMP=$RUNNER_TEMP"
+          case "$KACHE_CACHE_DIR" in
+            "$RUNNER_TEMP"/*) ;;
+            *) echo "::error::KACHE_CACHE_DIR is not under RUNNER_TEMP"; exit 1 ;;
+          esac
+
+      - name: Build, then rebuild from a clean target
+        run: |
+          cargo build --manifest-path "$FIXTURE/Cargo.toml"
+          rm -rf "$FIXTURE/target"
+          cargo build --manifest-path "$FIXTURE/Cargo.toml"
+
+      - name: Cached rlibs are hardlinked into target/
+        run: |
+          linked=$(find "$KACHE_CACHE_DIR" -type f -links +1 | wc -l)
+          echo "store files with more than one link: $linked"
+          if [ "$linked" -eq 0 ]; then
+            echo "::error::no store file shares an inode with target/"
+            exit 1
+          fi
+
   cross-compile:
     # kunobi-ninja/kache#823: a bare CC export sent riscv64 C compiles to the
     # host gcc. With cache-c-cpp, the cc crate must pick the cross compiler,
