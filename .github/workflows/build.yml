@@ -57,6 +57,9 @@ jobs:
     env:
       TARGET: riscv64gc-unknown-linux-gnu
       FIXTURE: test/fixtures/cross-cc
+      # Kache restores a matching build-script run whole, so on the rebuild
+      # cc would not run and answer.c would never reach the C cache.
+      KACHE_BUILD_SCRIPT_CACHE: "0"
     steps:
       - uses: actions/checkout@v4
 
