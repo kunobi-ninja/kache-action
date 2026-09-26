@@ -78103,9 +78103,59 @@ async function runKache(args) {
   return stdout;
 }
 
+/**
+ * Where the S3 remote comes from, or null without one: the `s3-*` inputs,
+ * else the RunsOn cache bucket when `runs-on-cache` is on, else `KACHE_S3_*`
+ * already in the environment (for example exported by an earlier step). No
+ * credentials come from RunsOn: kache uses the runner's instance role.
+ */
+function resolveS3Settings(env = process.env, input = core.getInput) {
+  const bucket = input("s3-bucket");
+  if (bucket) {
+    return {
+      source: "inputs",
+      bucket,
+      region: input("s3-region") || "us-east-1",
+      prefix: input("s3-prefix") || "artifacts",
+      endpoint: input("s3-endpoint") || undefined,
+    };
+  }
+  if (input("runs-on-cache") === "true") {
+    const runsOnBucket = env.RUNS_ON_S3_BUCKET_CACHE;
+    const region = env.RUNS_ON_AWS_REGION;
+    if (!runsOnBucket || !region) {
+      throw new Error(
+        "runs-on-cache needs RUNS_ON_S3_BUCKET_CACHE and RUNS_ON_AWS_REGION: " +
+          "add extras=s3-cache to the job's runs-on label",
+      );
+    }
+    const repository =
+      env.GITHUB_REPOSITORY_ID ||
+      (env.GITHUB_REPOSITORY || "unknown").replace(/[^A-Za-z0-9._-]/g, "_");
+    return {
+      source: "runs-on",
+      bucket: runsOnBucket,
+      region,
+      prefix: `cache/kache/${repository}`,
+      endpoint: undefined,
+    };
+  }
+  const envBucket = (env.KACHE_S3_BUCKET || "").trim();
+  if (envBucket) {
+    return {
+      source: "environment",
+      bucket: envBucket,
+      region: env.KACHE_S3_REGION || "us-east-1",
+      prefix: env.KACHE_S3_PREFIX || "artifacts",
+      endpoint: env.KACHE_S3_ENDPOINT || undefined,
+    };
+  }
+  return null;
+}
+
 /** Check if S3 is configured */
 function isS3Configured() {
-  return !!core.getInput("s3-bucket");
+  return resolveS3Settings() !== null;
 }
 
 /** Check if GitHub Actions cache should be used */
@@ -78990,6 +79040,7 @@ module.exports = {
   downloadAndVerify,
   runKache,
   isS3Configured,
+  resolveS3Settings,
   useGitHubCache,
   isNodeCacheEnabled,
   isForkPullRequest,

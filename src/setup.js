@@ -9,6 +9,7 @@ const {
   downloadAndVerify,
   runKache,
   isS3Configured,
+  resolveS3Settings,
   useGitHubCache,
   isNodeCacheEnabled,
   isForkPullRequest,
@@ -285,15 +286,25 @@ async function run() {
     // env-only remote leaves it local-only. Materialize the remote in the
     // config file the daemon watches, before anything below can start one.
     // Credentials stay in the masked env vars exported above.
-    const s3Remote = s3
+    const s3Settings = resolveS3Settings();
+    const s3Remote = s3Settings
       ? {
-          bucket: core.getInput("s3-bucket"),
-          region: core.getInput("s3-region") || "us-east-1",
-          prefix: core.getInput("s3-prefix") || "artifacts",
-          endpoint: core.getInput("s3-endpoint") || undefined,
+          bucket: s3Settings.bucket,
+          region: s3Settings.region,
+          prefix: s3Settings.prefix,
+          endpoint: s3Settings.endpoint,
           readonly: !saveCacheEnabled,
         }
       : null;
+    if (s3Settings && s3Settings.source === "runs-on") {
+      // Commands in later steps read the same remote from the environment.
+      core.exportVariable("KACHE_S3_BUCKET", s3Settings.bucket);
+      core.exportVariable("KACHE_S3_REGION", s3Settings.region);
+      core.exportVariable("KACHE_S3_PREFIX", s3Settings.prefix);
+      core.info(
+        `RunsOn cache bucket: s3://${s3Settings.bucket}/${s3Settings.prefix} (${s3Settings.region})`,
+      );
+    }
     if (s3) {
       if (process.env.KACHE_CONFIG) {
         core.warning(

@@ -17,6 +17,10 @@ inputs:
     description: "S3 key prefix"
     required: false
     default: "artifacts"
+  runs-on-cache:
+    description: "On a RunsOn runner, use the stack's S3 cache bucket (RUNS_ON_S3_BUCKET_CACHE, RUNS_ON_AWS_REGION; add extras=s3-cache to runs-on) under cache/kache/<repository id>, with the runner's instance role. Ignored when s3-bucket is set."
+    required: false
+    default: "false"
   s3-endpoint:
     description: "Custom S3 endpoint (MinIO, R2, etc.)"
     required: false

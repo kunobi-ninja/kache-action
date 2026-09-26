@@ -112,6 +112,26 @@ jobs:
 
 GitHub Actions cache has a 10 GB limit per repo. For larger projects or shared caches across repos, use S3.
 
+When `s3-bucket` is not set, `KACHE_S3_BUCKET` (with `KACHE_S3_REGION`, `KACHE_S3_PREFIX` and `KACHE_S3_ENDPOINT`) exported by an earlier step selects the S3 backend the same way.
+
+### RunsOn
+
+On [RunsOn](https://runs-on.com) runners, `runs-on-cache: true` uses the stack's S3 cache bucket, with no credentials to configure: kache reads the runner's instance role.
+
+```yaml
+jobs:
+  build:
+    runs-on: runs-on=${{ github.run_id }}/runner=4cpu-linux-x64/extras=s3-cache
+    steps:
+      - uses: actions/checkout@v6
+      - uses: kunobi-ninja/kache-action@v1
+        with:
+          runs-on-cache: true
+      - run: cargo build --release
+```
+
+The cache lives under `cache/kache/<repository id>` in `RUNS_ON_S3_BUCKET_CACHE`, where the stack's lifecycle rule expires it. The runner's role must be allowed to read and write that prefix; check your RunsOn version's cache permissions if uploads are refused.
+
 ### Restore without saving
 
 Use `save-cache: false` to restore an existing cache without writing changes back. This is useful for keeping one-off PR and branch jobs from consuming cache storage:
@@ -189,6 +209,7 @@ keeping ordinary S3/v3 behavior. Trust-policy violations still fail closed.
 | `s3-endpoint` | — | Custom S3 endpoint (MinIO, R2, etc.) |
 | `s3-access-key-id` | — | S3 access key ID |
 | `s3-secret-access-key` | — | S3 secret access key |
+| `runs-on-cache` | `false` | On RunsOn, use the stack's S3 cache bucket under `cache/kache/<repository id>` |
 | `cache-executables` | `false` | Also cache bin/dylib/proc-macro outputs |
 | `cache-c-cpp` | `false` | Cache supported C/C++ object compiles. Rides on `RUSTC_WRAPPER` via the `cc` crate on Unix; sets `CC_<host-triple>` to `kache clang-cl` on Windows. |
 | `github-cache` | `true` | Use GitHub Actions cache for the local store when S3 is not configured |

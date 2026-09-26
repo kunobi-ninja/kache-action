@@ -78103,9 +78103,59 @@ async function runKache(args) {
   return stdout;
 }
 
+/**
+ * Where the S3 remote comes from, or null without one: the `s3-*` inputs,
+ * else the RunsOn cache bucket when `runs-on-cache` is on, else `KACHE_S3_*`
+ * already in the environment (for example exported by an earlier step). No
+ * credentials come from RunsOn: kache uses the runner's instance role.
+ */
+function resolveS3Settings(env = process.env, input = core.getInput) {
+  const bucket = input("s3-bucket");
+  if (bucket) {
+    return {
+      source: "inputs",
+      bucket,
+      region: input("s3-region") || "us-east-1",
+      prefix: input("s3-prefix") || "artifacts",
+      endpoint: input("s3-endpoint") || undefined,
+    };
+  }
+  if (input("runs-on-cache") === "true") {
+    const runsOnBucket = env.RUNS_ON_S3_BUCKET_CACHE;
+    const region = env.RUNS_ON_AWS_REGION;
+    if (!runsOnBucket || !region) {
+      throw new Error(
+        "runs-on-cache needs RUNS_ON_S3_BUCKET_CACHE and RUNS_ON_AWS_REGION: " +
+          "add extras=s3-cache to the job's runs-on label",
+      );
+    }
+    const repository =
+      env.GITHUB_REPOSITORY_ID ||
+      (env.GITHUB_REPOSITORY || "unknown").replace(/[^A-Za-z0-9._-]/g, "_");
+    return {
+      source: "runs-on",
+      bucket: runsOnBucket,
+      region,
+      prefix: `cache/kache/${repository}`,
+      endpoint: undefined,
+    };
+  }
+  const envBucket = (env.KACHE_S3_BUCKET || "").trim();
+  if (envBucket) {
+    return {
+      source: "environment",
+      bucket: envBucket,
+      region: env.KACHE_S3_REGION || "us-east-1",
+      prefix: env.KACHE_S3_PREFIX || "artifacts",
+      endpoint: env.KACHE_S3_ENDPOINT || undefined,
+    };
+  }
+  return null;
+}
+
 /** Check if S3 is configured */
 function isS3Configured() {
-  return !!core.getInput("s3-bucket");
+  return resolveS3Settings() !== null;
 }
 
 /** Check if GitHub Actions cache should be used */
@@ -78990,6 +79040,7 @@ module.exports = {
   downloadAndVerify,
   runKache,
   isS3Configured,
+  resolveS3Settings,
   useGitHubCache,
   isNodeCacheEnabled,
   isForkPullRequest,
@@ -121039,6 +121090,7 @@ const {
   downloadAndVerify,
   runKache,
   isS3Configured,
+  resolveS3Settings,
   useGitHubCache,
   isNodeCacheEnabled,
   isForkPullRequest,
@@ -121315,15 +121367,25 @@ async function run() {
     // env-only remote leaves it local-only. Materialize the remote in the
     // config file the daemon watches, before anything below can start one.
     // Credentials stay in the masked env vars exported above.
-    const s3Remote = s3
+    const s3Settings = resolveS3Settings();
+    const s3Remote = s3Settings
       ? {
-          bucket: core.getInput("s3-bucket"),
-          region: core.getInput("s3-region") || "us-east-1",
-          prefix: core.getInput("s3-prefix") || "artifacts",
-          endpoint: core.getInput("s3-endpoint") || undefined,
+          bucket: s3Settings.bucket,
+          region: s3Settings.region,
+          prefix: s3Settings.prefix,
+          endpoint: s3Settings.endpoint,
           readonly: !saveCacheEnabled,
         }
       : null;
+    if (s3Settings && s3Settings.source === "runs-on") {
+      // Commands in later steps read the same remote from the environment.
+      core.exportVariable("KACHE_S3_BUCKET", s3Settings.bucket);
+      core.exportVariable("KACHE_S3_REGION", s3Settings.region);
+      core.exportVariable("KACHE_S3_PREFIX", s3Settings.prefix);
+      core.info(
+        `RunsOn cache bucket: s3://${s3Settings.bucket}/${s3Settings.prefix} (${s3Settings.region})`,
+      );
+    }
     if (s3) {
       if (process.env.KACHE_CONFIG) {
         core.warning(
