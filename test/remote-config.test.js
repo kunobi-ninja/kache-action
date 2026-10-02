@@ -158,6 +158,27 @@ test("daemonRemoteFromStats recognizes the expected active remote", () => {
   assert.equal(daemonRemoteFromStats(stats).ok, true);
 });
 
+test("daemonRemoteFromStats reads the aligned stats layout", () => {
+  const stats = [
+    "  Daemon       v0.29.0   epoch 7, config /tmp/kache/kache-action.toml",
+    "  Remote       s3://sccache/kache",
+    "  Remote hits  12",
+  ].join("\n");
+  assert.deepEqual(daemonRemoteFromStats(stats, "s3://sccache/kache"), {
+    ok: true,
+    detail: "s3://sccache/kache",
+  });
+  assert.equal(
+    daemonRemoteFromStats("  Daemon       offline\n  Remote       s3://x").ok,
+    false,
+  );
+  assert.equal(daemonRemoteFromStats("  Remote       not configured").ok, false);
+  assert.equal(
+    daemonRemoteFromStats("  Remote       s3://other", "s3://sccache/kache").ok,
+    false,
+  );
+});
+
 test("daemonRemoteFromStats rejects a divergent remote", () => {
   const verdict = daemonRemoteFromStats(
     "Remote:     s3://other-bucket/elsewhere",

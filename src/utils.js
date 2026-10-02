@@ -971,10 +971,14 @@ function expectedRemoteDescription({ bucket, prefix }) {
  *  recognized or daemon didn't report its state — older kache; warn only). */
 function daemonRemoteFromStats(statsOutput, expectedRemote) {
   const text = statsOutput || "";
-  if (/^Daemon:\s*offline/m.test(text)) {
+  // Older kache prints `Remote:     value`; newer releases print an indented
+  // `  Remote   value` row with no colon.
+  const row = (label) =>
+    new RegExp(`^\\s*${label}(?::\\s*|\\s{2,})(.+)$`, "m").exec(text);
+  if (/^offline\b/.test(row("Daemon")?.[1]?.trim() ?? "")) {
     return { ok: false, detail: "daemon offline" };
   }
-  const match = /^Remote:\s*(.+)$/m.exec(text);
+  const match = row("Remote");
   if (!match) {
     return { ok: null, detail: "no Remote line in `kache stats` output" };
   }
