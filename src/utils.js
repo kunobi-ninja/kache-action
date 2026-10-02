@@ -131,6 +131,24 @@ async function runKache(args) {
   return stdout;
 }
 
+/** With `strict: true`, every warning the action prints also fails the step,
+ *  so a CI job sees when kache and the action stop agreeing. Wraps
+ *  `warning` on the shared core module and returns the check to run last. */
+function strictMode(coreModule = core) {
+  if (!/^true$/i.test(coreModule.getInput("strict").trim())) return () => {};
+  const warnings = [];
+  const warning = coreModule.warning;
+  coreModule.warning = (message, properties) => {
+    warnings.push(message instanceof Error ? message.message : String(message));
+    return warning.call(coreModule, message, properties);
+  };
+  return () => {
+    if (warnings.length > 0) {
+      coreModule.setFailed(`strict: the action warned ${warnings.length} time(s): ${warnings.join(" | ")}`);
+    }
+  };
+}
+
 /** Check if S3 is configured */
 function isS3Configured() {
   return !!core.getInput("s3-bucket");
@@ -887,7 +905,7 @@ function labelHeading(markdown, label) {
  * as a snapshot, but make the event window truthful for Actions consumers. */
 function labelCurrentJobWindow(markdown) {
   return markdown.replace(
-    /^(\|\s*Window\s*\|\s*)last 24h(\s*\|)$/m,
+    /^(\|\s*(?:\*\*)?Window(?:\*\*)?\s*\|\s*)last 24h(\s*\|)$/m,
     "$1current job$2",
   );
 }
@@ -1021,6 +1039,7 @@ module.exports = {
   getLatestVersion,
   downloadAndVerify,
   runKache,
+  strictMode,
   isS3Configured,
   useGitHubCache,
   isNodeCacheEnabled,

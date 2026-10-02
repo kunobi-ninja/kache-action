@@ -91,6 +91,10 @@ inputs:
   max-size:
     description: 'Max local kache store size before LRU eviction (e.g. "100GiB"). Maps to KACHE_MAX_SIZE. Default: 5% of the cache volume, between 5 GiB and 100 GiB. Controls the local store, not a remote/S3 cap.'
     required: false
+  strict:
+    description: "Fail the step on anything the action would otherwise only warn about, such as a kache command that exits non-zero or a daemon remote it cannot verify. For CI that tests kache and the action together."
+    required: false
+    default: "false"
 
 runs:
   using: "node24"
