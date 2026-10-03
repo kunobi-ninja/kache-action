@@ -10,6 +10,7 @@ const {
   jobLabel,
   labelHeading,
   labelCurrentJobWindow,
+  strictMode,
 } = require("./utils");
 
 async function run() {
@@ -54,9 +55,12 @@ async function run() {
       const md = await runKache(["report", "--format", "github", "--since", "24h"]);
       if (md && md.trim() && md.includes(REPORT_HEADING)) {
         reportMarkdown = labelCurrentJobWindow(md.trim());
+      } else {
+        core.warning("kache did not produce its GitHub report; using the action's own summary");
       }
-    } catch {
+    } catch (error) {
       // Older kache without report/github format — fall back to legacy
+      core.warning(`kache report failed (${error.message}); using the action's own summary`);
     }
 
     // Legacy fallback for older kache versions
@@ -172,4 +176,13 @@ async function run() {
   }
 }
 
-run();
+async function main() {
+  const finishStrict = strictMode();
+  try {
+    await run();
+  } finally {
+    finishStrict();
+  }
+}
+
+main();

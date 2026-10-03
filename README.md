@@ -206,6 +206,7 @@ keeping ordinary S3/v3 behavior. Trust-policy violations still fail closed.
 | `pr-comment` | `true` | Post/update a sticky PR comment with cache stats. |
 | `job-summary` | `true` | Write cache stats to the GitHub Actions job summary. |
 | `max-size` | Unset; kache uses 5% of cache volume (5–100 GiB) | Max local kache store size before LRU eviction (e.g. `100GiB`). Maps to `KACHE_MAX_SIZE`. If the volume size cannot be read, kache uses 50 GiB. Controls the **local** store, not a remote/S3 cap. |
+| `strict` | `false` | Fail the step on anything the action would otherwise only warn about, such as a kache command that exits non-zero or a daemon remote it cannot verify. Meant for CI that tests kache and the action together. |
 
 > **S3-only inputs:** `sync`, `warm`, `manifest-key`, `namespace`, and `min-compile-ms` only take effect with the S3 backend. They tune how the kache daemon *selectively prefetches* expensive artifacts from the remote during setup. The GitHub Actions cache backend has nothing to prefetch — it restores the entire local store in one shot via `@actions/cache` and starts no daemon — so these inputs are ignored when S3 is not configured.
 

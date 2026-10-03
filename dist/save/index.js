@@ -78103,6 +78103,24 @@ async function runKache(args) {
   return stdout;
 }
 
+/** With `strict: true`, every warning the action prints also fails the step,
+ *  so a CI job sees when kache and the action stop agreeing. Wraps
+ *  `warning` on the shared core module and returns the check to run last. */
+function strictMode(coreModule = core) {
+  if (!/^true$/i.test(coreModule.getInput("strict").trim())) return () => {};
+  const warnings = [];
+  const warning = coreModule.warning;
+  coreModule.warning = (message, properties) => {
+    warnings.push(message instanceof Error ? message.message : String(message));
+    return warning.call(coreModule, message, properties);
+  };
+  return () => {
+    if (warnings.length > 0) {
+      coreModule.setFailed(`strict: the action warned ${warnings.length} time(s): ${warnings.join(" | ")}`);
+    }
+  };
+}
+
 /** Check if S3 is configured */
 function isS3Configured() {
   return !!core.getInput("s3-bucket");
@@ -78859,7 +78877,7 @@ function labelHeading(markdown, label) {
  * as a snapshot, but make the event window truthful for Actions consumers. */
 function labelCurrentJobWindow(markdown) {
   return markdown.replace(
-    /^(\|\s*Window\s*\|\s*)last 24h(\s*\|)$/m,
+    /^(\|\s*(?:\*\*)?Window(?:\*\*)?\s*\|\s*)last 24h(\s*\|)$/m,
     "$1current job$2",
   );
 }
@@ -78993,6 +79011,7 @@ module.exports = {
   getLatestVersion,
   downloadAndVerify,
   runKache,
+  strictMode,
   isS3Configured,
   useGitHubCache,
   isNodeCacheEnabled,
@@ -121044,6 +121063,7 @@ const {
   jobLabel,
   labelHeading,
   labelCurrentJobWindow,
+  strictMode,
 } = __nccwpck_require__(95804);
 
 async function run() {
@@ -121088,9 +121108,12 @@ async function run() {
       const md = await runKache(["report", "--format", "github", "--since", "24h"]);
       if (md && md.trim() && md.includes(REPORT_HEADING)) {
         reportMarkdown = labelCurrentJobWindow(md.trim());
+      } else {
+        core.warning("kache did not produce its GitHub report; using the action's own summary");
       }
-    } catch {
+    } catch (error) {
       // Older kache without report/github format — fall back to legacy
+      core.warning(`kache report failed (${error.message}); using the action's own summary`);
     }
 
     // Legacy fallback for older kache versions
@@ -121206,7 +121229,16 @@ async function run() {
   }
 }
 
-run();
+async function main() {
+  const finishStrict = strictMode();
+  try {
+    await run();
+  } finally {
+    finishStrict();
+  }
+}
+
+main();
 
 module.exports = __webpack_exports__;
 /******/ })()

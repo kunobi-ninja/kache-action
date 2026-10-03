@@ -30,6 +30,7 @@ const {
   writeRemoteConfig,
   expectedRemoteDescription,
   daemonRemoteFromStats,
+  strictMode,
 } = require("./utils");
 
 async function run() {
@@ -394,4 +395,13 @@ async function run() {
   }
 }
 
-run();
+async function main() {
+  const finishStrict = strictMode();
+  try {
+    await run();
+  } finally {
+    finishStrict();
+  }
+}
+
+main();

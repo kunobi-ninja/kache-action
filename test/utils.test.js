@@ -56,6 +56,12 @@ test("labelCurrentJobWindow makes the cleared-log report window truthful", () =>
   assert.doesNotMatch(out, /last 24h/);
 });
 
+test("labelCurrentJobWindow relabels the bold row kache prints", () => {
+  // `kache report --format github` since kunobi-ninja/kache#923.
+  const out = utils.labelCurrentJobWindow("| **Window** | last 24h |");
+  assert.equal(out, "| **Window** | current job |");
+});
+
 test("labelCurrentJobWindow leaves unrelated markdown unchanged", () => {
   const md = "| Window | last 7d |";
   assert.equal(utils.labelCurrentJobWindow(md), md);
