@@ -78499,11 +78499,23 @@ function hasUnsafeEnvOnlyDaemonVersion(version) {
 /** Build a GitHub Actions cache key from Cargo.lock files and kache version.
  *  Including the kache version ensures that binary upgrades (which may change
  *  cache key computation) invalidate stale caches. GH Actions cache is immutable
- *  so without this, old entries would persist forever after a kache update. */
+ *  so without this, old entries would persist forever after a kache update.
+ *
+ *  `cache-key-salt` is appended to the exact key only. Without it the entry a key
+ *  describes is frozen at the first run after a lockfile or kache update, so later
+ *  runs cannot publish the artifacts they compiled; a salt such as
+ *  `${{ github.sha }}` makes every run write a fresh entry and lets the store keep
+ *  up with the branch. `restoreKeys` stays prefix-only, so the newest matching
+ *  entry is still restored. */
 async function buildCacheKey(workspace = process.cwd()) {
   const prefix = core.getInput("cache-key-prefix") || "kache";
   const platform = `${os.platform()}-${os.arch()}`;
   const kacheVersion = process.env.KACHE_VERSION || "unknown";
+  // The cache service stores keys verbatim; keep the salt to characters that cannot
+  // be confused with the key separators.
+  const salt = (core.getInput("cache-key-salt") || "")
+    .trim()
+    .replace(/[^A-Za-z0-9._-]/g, "-");
 
   // Hash all Cargo.lock files in the workspace. @actions/glob expects
   // forward-slash patterns, so normalize Windows backslashes.
@@ -78520,7 +78532,7 @@ async function buildCacheKey(workspace = process.cwd()) {
     lockHash = hasher.digest("hex").slice(0, 16);
   }
 
-  const key = `${prefix}-${kacheVersion}-${platform}-${lockHash}`;
+  const key = `${prefix}-${kacheVersion}-${platform}-${lockHash}${salt ? `-${salt}` : ""}`;
   const restoreKeys = [`${prefix}-${kacheVersion}-${platform}-`];
   return { key, restoreKeys };
 }

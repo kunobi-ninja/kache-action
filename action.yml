@@ -56,6 +56,10 @@ inputs:
     description: "Custom prefix for GitHub Actions cache key"
     required: false
     default: "kache"
+  cache-key-salt:
+    description: "Appended to the exact cache key only (e.g. github.sha), so every run writes a fresh immutable entry while restore matching stays prefix-only"
+    required: false
+    default: ""
   sync:
     description: "Pull ALL remote cache on setup (slow, prefer warm)"
     required: false
