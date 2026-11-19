@@ -146,7 +146,7 @@ jobs:
             exit 1
           fi
           log="${KACHE_RUNTIME_DIR:-$KACHE_CACHE_DIR}/events.jsonl"
-          results=$(jq -r 'select(.crate_name == "answer.c") | .result' "$log" | tr '\n' ' ')
+          results=$(jq -r 'select((.object_output // "") | endswith("answer.o")) | .result' "$log" | tr '\n' ' ')
           echo "answer.c events: $results"
           case "$results" in
             *miss*) ;;
@@ -171,7 +171,8 @@ jobs:
           fi
           log="${KACHE_RUNTIME_DIR:-$KACHE_CACHE_DIR}/events.jsonl"
           results=$(tail -n "+$((EVENTS_BEFORE_REBUILD + 1))" "$log" \
-            | jq -r 'select(.crate_name == "answer.c" or .crate_name == "build_script_run") | "\(.crate_name)=\(.result)"' \
+            | jq -r 'if (.object_output // "" | endswith("answer.o")) then "answer.c=\(.result)"
+                elif .crate_name == "build_script_run" then "build_script_run=\(.result)" else empty end' \
             | tr '\n' ' ')
           echo "rebuild events: $results"
           case "$results" in
