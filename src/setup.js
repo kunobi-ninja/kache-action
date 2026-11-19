@@ -24,6 +24,7 @@ const {
   clearEventLog,
   clearTransferLog,
   isNoCacheRequested,
+  findWindowsClang,
   getCppCompilerEnv,
   getCmakeLauncherEnv,
   findOldCcLockfiles,
@@ -225,8 +226,26 @@ async function run() {
     // Opt-in C/C++ object caching. Preserve an explicitly configured real
     // compiler and otherwise use kache's supported platform defaults.
     if (core.getBooleanInput("cache-c-cpp")) {
+      let usesWindowsRustcWrapper = false;
       const compilerEnv = {
-        ...getCppCompilerEnv(os.platform(), process.env),
+        ...getCppCompilerEnv(os.platform(), process.env, os.arch(), (env, arch) => {
+          let compiler;
+          try {
+            compiler = findWindowsClang(env, arch);
+          } catch (err) {
+            core.debug(`Windows clang-cl probe failed: ${err.message}`);
+          }
+          if (compiler) {
+            usesWindowsRustcWrapper = !compiler.onPath;
+            core.info(`Using clang-cl for C/C++ caching: ${compiler.path}`);
+          } else {
+            core.warning(
+              "No clang-cl could compile with the installed MSVC headers. " +
+              "Leaving CC and CXX unset. Set CC and CXX explicitly to use a compatible Clang.",
+            );
+          }
+          return compiler;
+        }),
         ...getCmakeLauncherEnv(kacheBin, process.env),
       };
       for (const [name, value] of Object.entries(compilerEnv)) {
@@ -237,12 +256,11 @@ async function run() {
       );
       core.info(
         exported.length
-          ? `C/C++ caching enabled via ${exported.join(", ")}`
-          : "C/C++ caching enabled via RUSTC_WRAPPER (the cc crate wraps the compiler it selects, cross targets included)",
+          ? `C/C++ cache configuration: ${exported.join(", ")}`
+          : "C/C++ compiler selection remains with the build system",
       );
-      // On Unix the cc crate wraps C compiles with kache only from 1.2.66. An
-      // older pin still builds but caches no C objects, so say so.
-      if (os.platform() !== "win32") {
+      // The cc crate needs 1.2.66 to wrap a compiler via RUSTC_WRAPPER.
+      if (os.platform() !== "win32" || usesWindowsRustcWrapper) {
         try {
           for (const { file, versions } of await findOldCcLockfiles()) {
             core.notice(

@@ -57,7 +57,7 @@ Enable the C/C++ compiler wrappers explicitly:
 
 On Linux and macOS nothing is exported. The Rust `cc` crate already recognizes kache as a compiler wrapper through `RUSTC_WRAPPER` (cc 1.2.66 and newer), and applies it to whatever compiler it selects, so cross-compiled targets keep their own toolchain and still compile through the cache. If a `Cargo.lock` in the workspace pins an older `cc`, setup prints a notice naming the lockfile; run `cargo update -p cc` to get C objects cached.
 
-On Windows the action sets `CC_<host-triple>` and `CXX_<host-triple>` to `kache clang-cl`, because without an explicit compiler `cc` selects MSVC `cl.exe`, which kache does not support. Scoping those to the runner's own triple leaves other targets to `cc`.
+On Windows the action checks whether `clang-cl` on `PATH` can compile against the installed MSVC headers, then tries Visual Studio's bundled Clang if needed. It sets `CC_<host-triple>` and `CXX_<host-triple>` for the compiler that passed. The Visual Studio fallback uses a full path and needs `cc` 1.2.66 or newer to cache through `RUSTC_WRAPPER`. If neither compiler works, the action warns and leaves compiler selection to the build. An explicit compiler choice takes precedence.
 
 If `CC` or `CXX` is already set at the job level, that compiler is preserved and wrapped as-is (a value already headed by another cache wrapper such as `sccache` or `ccache` is left untouched). Note that a bare `CC` applies to every target: set `CC_<target>` instead if the job cross-compiles.
 
@@ -190,7 +190,7 @@ keeping ordinary S3/v3 behavior. Trust-policy violations still fail closed.
 | `s3-access-key-id` | — | S3 access key ID |
 | `s3-secret-access-key` | — | S3 secret access key |
 | `cache-executables` | `false` | Also cache bin/dylib/proc-macro outputs |
-| `cache-c-cpp` | `false` | Cache supported C/C++ object compiles. Rides on `RUSTC_WRAPPER` via the `cc` crate on Unix; sets `CC_<host-triple>` to `kache clang-cl` on Windows. |
+| `cache-c-cpp` | `false` | Cache supported C/C++ object compiles. On Windows the action selects a compatible `clang-cl` for the host target when the workflow leaves the compiler unspecified. |
 | `github-cache` | `true` | Use GitHub Actions cache for the local store when S3 is not configured |
 | `cache-dir` | native kache cache directory | Local kache store directory. Use `${{ runner.temp }}/kache` to colocate it with the runner workspace. |
 | `node-cache` | `false` | Reuse `cache-dir` as a trusted node-local store across ephemeral jobs. Requires a runner mount trust boundary and disables GitHub Actions cache persistence. |
