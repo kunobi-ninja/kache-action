@@ -112,6 +112,21 @@ jobs:
 
 GitHub Actions cache has a 10 GB limit per repo. For larger projects or shared caches across repos, use S3.
 
+A GitHub Actions cache entry is immutable, and this backend keys the stored snapshot by the
+kache version, operating system, architecture, and `Cargo.lock` hash. Without a salt, that
+entry is frozen at the first run after a lockfile or kache update: later runs restore it,
+find that the key is already taken, and publish nothing, so every new commit recompiles
+what it could have reused. Set `cache-key-salt` (for example to `${{ github.sha }}`) to write
+a fresh entry per commit while the prefix restore key still restores the newest match:
+
+```yaml
+- uses: kunobi-ninja/kache-action@v1
+  with:
+    cache-key-salt: ${{ github.sha }}
+    # Keep untrusted jobs restore-only so they never claim a key they cannot refresh.
+    save-cache: ${{ github.ref == 'refs/heads/main' }}
+```
+
 ### Restore without saving
 
 Use `save-cache: false` to restore an existing cache without writing changes back. This is useful for keeping one-off PR and branch jobs from consuming cache storage:
@@ -197,6 +212,7 @@ keeping ordinary S3/v3 behavior. Trust-policy violations still fail closed.
 | `runtime-dir` | job-scoped `/tmp/kache-<hash>` in Actions (`runner.temp` on Windows) | Override sockets, locks, logs, events, and build-session state. Every Actions job is isolated, even when `cache-dir` is persistent. The default is short on purpose: a Unix socket path holds at most 103 bytes on macOS, and a path under `runner.temp` that includes the job name can exceed it on self-hosted runners. An action-derived directory is created `0700` and removed by the post step; one you set is left alone. |
 | `save-cache` | `true` | Save cache changes after the build. Set to `false` for restore-only jobs; with S3 this also disables remote uploads. |
 | `cache-key-prefix` | `kache` | Prefix for the GitHub Actions cache key |
+| `cache-key-salt` | — | Appended to the exact cache key only (for example `${{ github.sha }}`), so every run writes a fresh immutable entry while restore matching stays prefix-only. See [Cache backends](#cache-backends). |
 | `sync` | `false` | Pull the **entire** remote cache on setup (slow; prefer `warm`). S3 only. |
 | `warm` | `true` | Auto-prefetch expensive artifacts from the build manifest on daemon startup. S3 only. |
 | `manifest-key` | — | Manifest key for scoping builds (default: target triple). Use different keys for clippy/test/release builds that share one S3 bucket. |
