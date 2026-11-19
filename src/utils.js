@@ -7,6 +7,7 @@ const glob = require("@actions/glob");
 const github = require("@actions/github");
 const tc = require("@actions/tool-cache");
 const crypto = require("crypto");
+const childProcess = require("node:child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -203,6 +204,59 @@ function hostTargetTriple(platform, arch) {
   return `${cpu}-unknown-linux-gnu`;
 }
 
+/** Try the PATH compiler first, then the Clang tools installed with Visual
+ * Studio. A version string alone cannot tell whether Clang can use the
+ * selected MSVC headers. Never run a probe through a shell. */
+function findWindowsClang(env, arch, spawn = childProcess.spawnSync) {
+  const win = path.win32;
+  const run = (file, args) =>
+    spawn(file, args, { env, encoding: "utf8", timeout: 10000, windowsHide: true });
+  const where = win.join(env.SystemRoot || "C:\\Windows", "System32", "where.exe");
+  const onPath = run(where, ["$PATH:clang-cl.exe"])
+    .stdout?.split(/\r?\n/)[0]?.trim();
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "kache-clang-probe-"));
+  try {
+    const source = path.join(scratch, "probe.cpp");
+    fs.writeFileSync(source, "#include <cstddef>\n");
+    const triple = hostTargetTriple("win32", arch);
+    const probeArgs = [
+      `--target=${triple}`, "/nologo", "/c", source,
+      `/Fo${path.join(scratch, "probe.obj")}`,
+    ];
+    const usable = (compiler) =>
+      compiler &&
+      win.isAbsolute(compiler) &&
+      run(compiler, probeArgs).status === 0;
+    if (usable(onPath)) return onPath;
+
+    const vcDir = env.VCINSTALLDIR || findVisualStudioVcDir(env, run);
+    if (!vcDir) return undefined;
+
+    const llvm = win.join(vcDir, "Tools", "Llvm");
+    const candidates = [
+      win.join(llvm, arch, "bin", "clang-cl.exe"),
+      win.join(llvm, "bin", "clang-cl.exe"),
+    ];
+    return candidates.find((compiler) => compiler !== onPath && usable(compiler));
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+function findVisualStudioVcDir(env, run) {
+  const installers = env["ProgramFiles(x86)"] || env.ProgramFiles;
+  if (!installers) return undefined;
+  const win = path.win32;
+  const vswhere = win.join(installers, "Microsoft Visual Studio", "Installer", "vswhere.exe");
+  const result = run(vswhere, [
+    "-latest", "-products", "*",
+    "-requires", "Microsoft.VisualStudio.Component.VC.Llvm.Clang",
+    "-property", "installationPath",
+  ]);
+  const install = result.stdout?.trim();
+  if (result.status === 0 && install) return win.join(install, "VC");
+}
+
 /** Resolve the environment exported by the opt-in C/C++ cache mode.
  *
  *  A bare CC applies to EVERY target, so it replaces the cross compiler
@@ -216,9 +270,14 @@ function hostTargetTriple(platform, arch) {
  *  their own toolchain and still compile through kache.
  *
  *  Windows is the exception: without CC, cc-rs selects MSVC `cl.exe`,
- *  which kache does not support. It stays explicit there, scoped to the
- *  runner's own triple so other targets are left alone. */
-function getCppCompilerEnv(platform, env = process.env, arch = os.arch()) {
+ *  which kache does not support. When Clang passes the toolchain check,
+ *  limit the override to the runner's own triple. */
+function getCppCompilerEnv(
+  platform,
+  env = process.env,
+  arch = os.arch(),
+  selectClang = findWindowsClang,
+) {
   const explicitCc = (env.CC || "").trim();
   const explicitCxx = (env.CXX || "").trim();
 
@@ -236,13 +295,22 @@ function getCppCompilerEnv(platform, env = process.env, arch = os.arch()) {
     if (cc) out.CC = cc;
     if (cxx) out.CXX = cxx;
   } else if (platform === "win32") {
-    // Without an explicit compiler the `cc` crate selects MSVC `cl.exe`,
-    // which kache cannot cache; clang-cl is the supported MSVC-driver
-    // mode. Scoped to the runner's own triple so no other target's
-    // compiler choice is displaced.
-    const triple = hostTargetTriple(platform, arch).replace(/-/g, "_");
-    out[`CC_${triple}`] = "kache clang-cl";
-    out[`CXX_${triple}`] = "kache clang-cl";
+    const triple = hostTargetTriple(platform, arch);
+    const scoped = triple.replace(/-/g, "_");
+    const configured = ["CC", "CXX"].some((name) =>
+      [`${name}_${triple}`, `${name}_${scoped}`, `HOST_${name}`, `TARGET_${name}`]
+        .some((key) => env[key]?.trim()),
+    );
+    if (!configured) {
+      const compiler = selectClang(env, arch);
+      if (compiler) {
+        // cc-rs takes an existing full path as one argument and uses
+        // RUSTC_WRAPPER (cc >= 1.2.66). A "kache <path>" command would split
+        // Program Files paths on whitespace, even with quotes.
+        out[`CC_${scoped}`] = compiler;
+        out[`CXX_${scoped}`] = compiler;
+      }
+    }
   }
   // `CC_KNOWN_WRAPPER_CUSTOM` teaches older `cc` versions to split a
   // "kache <compiler>" value into wrapper + compiler (current versions
@@ -1045,6 +1113,7 @@ module.exports = {
   isNodeCacheEnabled,
   isForkPullRequest,
   wrapCppCompiler,
+  findWindowsClang,
   getCppCompilerEnv,
   getCmakeLauncherEnv,
   hostTargetTriple,

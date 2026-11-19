@@ -1,5 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const utils = require("../src/utils");
 
 test("getCppCompilerEnv sets no compiler on Unix", () => {
@@ -16,21 +18,65 @@ test("getCppCompilerEnv scopes clang-cl to the runner's own target on Windows", 
   // Windows still needs an explicit compiler: without one cc-rs selects MSVC
   // `cl.exe`, which kache does not support. Scoping it to the host triple
   // keeps that choice off every other target.
-  assert.deepEqual(utils.getCppCompilerEnv("win32", {}, "x64"), {
-    CC_x86_64_pc_windows_msvc: "kache clang-cl",
-    CXX_x86_64_pc_windows_msvc: "kache clang-cl",
+  const compiler = "C:\\Program Files\\LLVM\\bin\\clang-cl.exe";
+  const select = () => compiler;
+  assert.deepEqual(utils.getCppCompilerEnv("win32", {}, "x64", select), {
+    CC_x86_64_pc_windows_msvc: compiler,
+    CXX_x86_64_pc_windows_msvc: compiler,
+  });
+  assert.deepEqual(utils.getCppCompilerEnv("win32", {}, "arm64", select), {
+    CC_aarch64_pc_windows_msvc: compiler,
+    CXX_aarch64_pc_windows_msvc: compiler,
+  });
+});
+
+test("Windows automatic Clang leaves existing compiler selection alone", () => {
+  const unexpected = () => assert.fail("compiler selection was already configured");
+  for (const key of ["CC_x86_64-pc-windows-msvc", "CXX_x86_64_pc_windows_msvc", "HOST_CC"]) {
+    assert.deepEqual(utils.getCppCompilerEnv("win32", { [key]: "cl.exe" }, "x64", unexpected), {});
+  }
+  assert.deepEqual(utils.getCppCompilerEnv("win32", { CXX: "clang-cl" }, "x64", unexpected), {
+    CXX: "kache clang-cl",
     CC_KNOWN_WRAPPER_CUSTOM: "kache",
   });
-  assert.deepEqual(utils.getCppCompilerEnv("win32", {}, "arm64"), {
-    CC_aarch64_pc_windows_msvc: "kache clang-cl",
-    CXX_aarch64_pc_windows_msvc: "kache clang-cl",
-    CC_KNOWN_WRAPPER_CUSTOM: "kache",
-  });
+  assert.deepEqual(utils.getCppCompilerEnv("win32", {}, "x64", () => undefined), {});
+});
+
+test("Windows Clang checks MSVC headers and tries the Visual Studio compiler", () => {
+  const standalone = "C:\\Program Files\\LLVM\\bin\\clang-cl.exe";
+  const install = "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise";
+  const bundled = path.win32.join(install, "VC", "Tools", "Llvm", "x64", "bin", "clang-cl.exe");
+  const env = { "ProgramFiles(x86)": "C:\\Program Files (x86)" };
+
+  for (const expected of [standalone, bundled, undefined]) {
+    const compilers = [];
+    let source;
+    const selected = utils.findWindowsClang(env, "x64", (file, args) => {
+      switch (path.win32.basename(file)) {
+        case "where.exe":
+          assert.deepEqual(args, ["$PATH:clang-cl.exe"]);
+          return { status: 0, stdout: `${standalone}\r\n` };
+        case "vswhere.exe":
+          assert.ok(args.includes("Microsoft.VisualStudio.Component.VC.Llvm.Clang"));
+          return { status: 0, stdout: `${install}\r\n` };
+        default:
+          compilers.push(file);
+          assert.deepEqual(args.slice(0, 3), ["--target=x86_64-pc-windows-msvc", "/nologo", "/c"]);
+          source = args[3];
+          assert.equal(fs.readFileSync(source, "utf8"), "#include <cstddef>\n");
+          return { status: file === expected ? 0 : 1 };
+      }
+    });
+    assert.equal(selected, expected);
+    assert.equal(compilers[0], standalone);
+    if (expected === bundled) assert.deepEqual(compilers, [standalone, bundled]);
+    assert.equal(fs.existsSync(source), false);
+  }
 });
 
 test("getCppCompilerEnv never sets a bare CC of its own", () => {
   for (const platform of ["linux", "darwin", "win32"]) {
-    const exported = utils.getCppCompilerEnv(platform, {}, "x64");
+    const exported = utils.getCppCompilerEnv(platform, {}, "x64", () => "clang-cl.exe");
     assert.equal(exported.CC, undefined, `${platform} must not set a bare CC`);
     assert.equal(
       exported.CXX,
