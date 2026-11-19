@@ -27,6 +27,20 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      - name: Set up Windows C/C++ caching
+        if: runner.os == 'Windows'
+        uses: ./
+        with:
+          version: v2.2.0
+          cache-c-cpp: true
+          github-cache: false
+          job-summary: false
+          pr-comment: false
+
+      - name: Build a C dependency on Windows
+        if: runner.os == 'Windows'
+        run: cargo build --manifest-path test/fixtures/cross-cc/Cargo.toml
+
   build:
     runs-on: ubuntu-latest
     steps:

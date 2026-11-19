@@ -19,7 +19,7 @@ test("getCppCompilerEnv scopes clang-cl to the runner's own target on Windows", 
   // `cl.exe`, which kache does not support. Scoping it to the host triple
   // keeps that choice off every other target.
   const compiler = "C:\\Program Files\\LLVM\\bin\\clang-cl.exe";
-  const select = () => compiler;
+  const select = () => ({ path: compiler, onPath: false });
   assert.deepEqual(utils.getCppCompilerEnv("win32", {}, "x64", select), {
     CC_x86_64_pc_windows_msvc: compiler,
     CXX_x86_64_pc_windows_msvc: compiler,
@@ -28,6 +28,14 @@ test("getCppCompilerEnv scopes clang-cl to the runner's own target on Windows", 
     CC_aarch64_pc_windows_msvc: compiler,
     CXX_aarch64_pc_windows_msvc: compiler,
   });
+  assert.deepEqual(
+    utils.getCppCompilerEnv("win32", {}, "x64", () => ({ path: compiler, onPath: true })),
+    {
+      CC_x86_64_pc_windows_msvc: "kache clang-cl",
+      CXX_x86_64_pc_windows_msvc: "kache clang-cl",
+      CC_KNOWN_WRAPPER_CUSTOM: "kache",
+    },
+  );
 });
 
 test("Windows automatic Clang leaves existing compiler selection alone", () => {
@@ -67,7 +75,7 @@ test("Windows Clang checks MSVC headers and tries the Visual Studio compiler", (
           return { status: file === expected ? 0 : 1 };
       }
     });
-    assert.equal(selected, expected);
+    assert.deepEqual(selected, expected ? { path: expected, onPath: expected === standalone } : undefined);
     assert.equal(compilers[0], standalone);
     if (expected === bundled) assert.deepEqual(compilers, [standalone, bundled]);
     assert.equal(fs.existsSync(source), false);
@@ -76,7 +84,9 @@ test("Windows Clang checks MSVC headers and tries the Visual Studio compiler", (
 
 test("getCppCompilerEnv never sets a bare CC of its own", () => {
   for (const platform of ["linux", "darwin", "win32"]) {
-    const exported = utils.getCppCompilerEnv(platform, {}, "x64", () => "clang-cl.exe");
+    const exported = utils.getCppCompilerEnv(
+      platform, {}, "x64", () => ({ path: "clang-cl.exe", onPath: true }),
+    );
     assert.equal(exported.CC, undefined, `${platform} must not set a bare CC`);
     assert.equal(
       exported.CXX,

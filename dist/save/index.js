@@ -78199,7 +78199,7 @@ function findWindowsClang(env, arch, spawn = childProcess.spawnSync) {
       compiler &&
       win.isAbsolute(compiler) &&
       run(compiler, probeArgs).status === 0;
-    if (usable(onPath)) return onPath;
+    if (usable(onPath)) return { path: onPath, onPath: true };
 
     const vcDir = env.VCINSTALLDIR || findVisualStudioVcDir(env, run);
     if (!vcDir) return undefined;
@@ -78209,7 +78209,8 @@ function findWindowsClang(env, arch, spawn = childProcess.spawnSync) {
       win.join(llvm, arch, "bin", "clang-cl.exe"),
       win.join(llvm, "bin", "clang-cl.exe"),
     ];
-    return candidates.find((compiler) => compiler !== onPath && usable(compiler));
+    const bundled = candidates.find((compiler) => compiler !== onPath && usable(compiler));
+    if (bundled) return { path: bundled, onPath: false };
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }
@@ -78276,11 +78277,12 @@ function getCppCompilerEnv(
     if (!configured) {
       const compiler = selectClang(env, arch);
       if (compiler) {
-        // cc-rs takes an existing full path as one argument and uses
-        // RUSTC_WRAPPER (cc >= 1.2.66). A "kache <path>" command would split
-        // Program Files paths on whitespace, even with quotes.
-        out[`CC_${scoped}`] = compiler;
-        out[`CXX_${scoped}`] = compiler;
+        // Keep the existing wrapper for the PATH compiler so older cc
+        // releases still cache it. For the VS fallback, cc takes the full
+        // path as one argument and uses RUSTC_WRAPPER (cc >= 1.2.66).
+        const command = compiler.onPath ? "kache clang-cl" : compiler.path;
+        out[`CC_${scoped}`] = command;
+        out[`CXX_${scoped}`] = command;
       }
     }
   }

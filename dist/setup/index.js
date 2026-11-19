@@ -78199,7 +78199,7 @@ function findWindowsClang(env, arch, spawn = childProcess.spawnSync) {
       compiler &&
       win.isAbsolute(compiler) &&
       run(compiler, probeArgs).status === 0;
-    if (usable(onPath)) return onPath;
+    if (usable(onPath)) return { path: onPath, onPath: true };
 
     const vcDir = env.VCINSTALLDIR || findVisualStudioVcDir(env, run);
     if (!vcDir) return undefined;
@@ -78209,7 +78209,8 @@ function findWindowsClang(env, arch, spawn = childProcess.spawnSync) {
       win.join(llvm, arch, "bin", "clang-cl.exe"),
       win.join(llvm, "bin", "clang-cl.exe"),
     ];
-    return candidates.find((compiler) => compiler !== onPath && usable(compiler));
+    const bundled = candidates.find((compiler) => compiler !== onPath && usable(compiler));
+    if (bundled) return { path: bundled, onPath: false };
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }
@@ -78276,11 +78277,12 @@ function getCppCompilerEnv(
     if (!configured) {
       const compiler = selectClang(env, arch);
       if (compiler) {
-        // cc-rs takes an existing full path as one argument and uses
-        // RUSTC_WRAPPER (cc >= 1.2.66). A "kache <path>" command would split
-        // Program Files paths on whitespace, even with quotes.
-        out[`CC_${scoped}`] = compiler;
-        out[`CXX_${scoped}`] = compiler;
+        // Keep the existing wrapper for the PATH compiler so older cc
+        // releases still cache it. For the VS fallback, cc takes the full
+        // path as one argument and uses RUSTC_WRAPPER (cc >= 1.2.66).
+        const command = compiler.onPath ? "kache clang-cl" : compiler.path;
+        out[`CC_${scoped}`] = command;
+        out[`CXX_${scoped}`] = command;
       }
     }
   }
@@ -121356,7 +121358,7 @@ async function run() {
     // Opt-in C/C++ object caching. Preserve an explicitly configured real
     // compiler and otherwise use kache's supported platform defaults.
     if (core.getBooleanInput("cache-c-cpp")) {
-      let selectedWindowsClang = false;
+      let usesWindowsRustcWrapper = false;
       const compilerEnv = {
         ...getCppCompilerEnv(os.platform(), process.env, os.arch(), (env, arch) => {
           let compiler;
@@ -121366,8 +121368,8 @@ async function run() {
             core.debug(`Windows clang-cl probe failed: ${err.message}`);
           }
           if (compiler) {
-            selectedWindowsClang = true;
-            core.info(`Using clang-cl for C/C++ caching: ${compiler}`);
+            usesWindowsRustcWrapper = !compiler.onPath;
+            core.info(`Using clang-cl for C/C++ caching: ${compiler.path}`);
           } else {
             core.warning(
               "No clang-cl could compile with the installed MSVC headers. " +
@@ -121390,7 +121392,7 @@ async function run() {
           : "C/C++ compiler selection remains with the build system",
       );
       // The cc crate needs 1.2.66 to wrap a compiler via RUSTC_WRAPPER.
-      if (os.platform() !== "win32" || selectedWindowsClang) {
+      if (os.platform() !== "win32" || usesWindowsRustcWrapper) {
         try {
           for (const { file, versions } of await findOldCcLockfiles()) {
             core.notice(

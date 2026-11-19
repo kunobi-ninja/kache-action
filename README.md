@@ -57,7 +57,7 @@ Enable the C/C++ compiler wrappers explicitly:
 
 On Linux and macOS nothing is exported. The Rust `cc` crate already recognizes kache as a compiler wrapper through `RUSTC_WRAPPER` (cc 1.2.66 and newer), and applies it to whatever compiler it selects, so cross-compiled targets keep their own toolchain and still compile through the cache. If a `Cargo.lock` in the workspace pins an older `cc`, setup prints a notice naming the lockfile; run `cargo update -p cc` to get C objects cached.
 
-On Windows the action checks whether `clang-cl` on `PATH` can compile against the installed MSVC headers, then tries Visual Studio's bundled Clang if needed. It sets `CC_<host-triple>` and `CXX_<host-triple>` to the compiler that passed. The `cc` crate needs version 1.2.66 or newer to pick up Kache through `RUSTC_WRAPPER`. If neither compiler works, the action warns and leaves compiler selection to the build. An explicit compiler choice takes precedence.
+On Windows the action checks whether `clang-cl` on `PATH` can compile against the installed MSVC headers, then tries Visual Studio's bundled Clang if needed. It sets `CC_<host-triple>` and `CXX_<host-triple>` for the compiler that passed. The Visual Studio fallback uses a full path and needs `cc` 1.2.66 or newer to cache through `RUSTC_WRAPPER`. If neither compiler works, the action warns and leaves compiler selection to the build. An explicit compiler choice takes precedence.
 
 If `CC` or `CXX` is already set at the job level, that compiler is preserved and wrapped as-is (a value already headed by another cache wrapper such as `sccache` or `ccache` is left untouched). Note that a bare `CC` applies to every target: set `CC_<target>` instead if the job cross-compiles.
 

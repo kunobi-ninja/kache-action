@@ -226,7 +226,7 @@ async function run() {
     // Opt-in C/C++ object caching. Preserve an explicitly configured real
     // compiler and otherwise use kache's supported platform defaults.
     if (core.getBooleanInput("cache-c-cpp")) {
-      let selectedWindowsClang = false;
+      let usesWindowsRustcWrapper = false;
       const compilerEnv = {
         ...getCppCompilerEnv(os.platform(), process.env, os.arch(), (env, arch) => {
           let compiler;
@@ -236,8 +236,8 @@ async function run() {
             core.debug(`Windows clang-cl probe failed: ${err.message}`);
           }
           if (compiler) {
-            selectedWindowsClang = true;
-            core.info(`Using clang-cl for C/C++ caching: ${compiler}`);
+            usesWindowsRustcWrapper = !compiler.onPath;
+            core.info(`Using clang-cl for C/C++ caching: ${compiler.path}`);
           } else {
             core.warning(
               "No clang-cl could compile with the installed MSVC headers. " +
@@ -260,7 +260,7 @@ async function run() {
           : "C/C++ compiler selection remains with the build system",
       );
       // The cc crate needs 1.2.66 to wrap a compiler via RUSTC_WRAPPER.
-      if (os.platform() !== "win32" || selectedWindowsClang) {
+      if (os.platform() !== "win32" || usesWindowsRustcWrapper) {
         try {
           for (const { file, versions } of await findOldCcLockfiles()) {
             core.notice(
